@@ -34,10 +34,9 @@ cp .env.example .env
 
 Edit `.env` and fill in your values:
 
-- `WALLET_ADDRESS` — your wallet address (required)
-- `PRIVATE_KEY` — your wallet private key (required)
-- `GDEX_API_KEY` — optional API key
-- `SESSION_KEY` — optional, for read-only operations like viewing holdings
+- `WALLET_ADDRESS` — EVM wallet address (`0x`-prefixed, required even for Solana)
+- `PRIVATE_KEY` — EVM private key (used only for login signing)
+- `GDEX_API_KEY` — API key (may be comma-separated; first key is used)
 - `DEFAULT_CHAIN_ID` — defaults to Solana (`622112261`)
 
 ### 3. Run
@@ -46,24 +45,55 @@ Edit `.env` and fill in your values:
 # Development (ts-node, no build step)
 npm run dev
 
+# Run test suite
+npm test
+
 # Production
 npm run build
 npm start
 ```
 
+## Authentication Architecture
+
+The SDK uses **EVM (secp256k1) signing for ALL chains**, including Solana. You must always use an EVM wallet.
+
+The `createAuthenticatedSession()` helper handles the full login flow in one call:
+
+```typescript
+import { createAuthenticatedSession, buyToken, formatSolAmount } from 'gdex-trading';
+
+const session = await createAuthenticatedSession();
+
+const result = await buyToken(session, {
+  tokenAddress: 'TOKEN_ADDRESS',
+  amount: formatSolAmount(0.005),
+});
+```
+
+Key concept: the session separates wallet and trading keys:
+- **Wallet private key** — only for the one-time login signature
+- **`session.tradingPrivateKey`** — for all trading POST requests
+- **`session.encryptedSessionKey`** — for authenticated GET requests
+
 ## Project Structure
 
 ```
 ├── src/
-│   ├── config.ts       # Environment config & chain definitions
-│   └── index.ts        # Main entry point
+│   ├── index.ts         # Barrel exports & CLI entry point
+│   ├── auth.ts          # Authentication & session management
+│   ├── trading.ts       # Trading helper functions
+│   ├── market.ts        # Market data helpers
+│   ├── config.ts        # Environment config & chain definitions
+│   ├── wallet.ts        # Wallet generation (EVM & Solana)
+│   └── test-suite.ts    # Comprehensive SDK test suite
 ├── references/
-│   ├── api_reference.md  # Complete SDK API reference
-│   └── examples.md       # Code examples for all features
-├── SKILL.md            # AI skill definition
-├── .env.example        # Environment template
-├── tsconfig.json       # TypeScript config
-└── package.json        # Dependencies & scripts
+│   ├── api_reference.md # Complete SDK API reference
+│   └── examples.md      # Code examples for all features
+├── SKILL.md             # AI skill definition
+├── CLAUDE.md            # Claude Code project instructions
+├── .env.example         # Environment template
+├── tsconfig.json        # TypeScript config
+└── package.json         # Dependencies & scripts
 ```
 
 ## Features
@@ -78,6 +108,7 @@ npm start
 ## Security
 
 - **Never commit your `.env` file** — it's in `.gitignore`
+- Use session keys for trading, not wallet keys
 - Validate addresses before transactions
 - Test with small amounts first
 - See `references/` for full API docs and examples

@@ -7,13 +7,26 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "ts-node src/test-suite.ts"
   },
-  "keywords": ["gdex", "trading", "dex", "crypto", "solana", "ethereum"],
+  "keywords": [
+    "gdex",
+    "trading",
+    "dex",
+    "crypto",
+    "solana",
+    "ethereum"
+  ],
   "license": "MIT",
   "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "@types/ws": "^8.18.1",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.4.7",
+    "ethers": "^6.16.0",
     "gdex.pro-sdk": "latest",
-    "dotenv": "^16.4.7"
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@types/node": "^22.12.0",

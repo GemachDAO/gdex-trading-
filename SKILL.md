@@ -11,10 +11,99 @@ Enable programmatic interaction with GDEX (Gemach DAO's decentralized exchange) 
 
 ## Installation
 
-Always install the SDK first:
-
 ```bash
-npm install gdex.pro-sdk
+npm install gdex.pro-sdk ethers ws
+```
+
+## Authentication Architecture (Critical)
+
+**The SDK uses EVM (secp256k1) signing internally for ALL chains, including Solana.** You must always use an EVM wallet (`0x`-prefixed address) even when trading on Solana.
+
+The authentication flow produces a **session** that separates concerns:
+- **Wallet private key** — used ONLY for the one-time login signature
+- **Session private key** — used for all trading POST requests (buy, sell, limit orders)
+- **Encrypted session key** — used for authenticated GET requests (holdings, orders, user info)
+
+**Never pass the wallet private key to trading functions.** Use the session's `tradingPrivateKey` instead.
+
+## Quick Start
+
+The fastest way to authenticate and trade:
+
+```typescript
+import { createAuthenticatedSession, buyToken, formatSolAmount } from 'gdex-trading';
+
+// One-call login — merges with .env config for any missing values
+const session = await createAuthenticatedSession({
+  apiKey: process.env.GDEX_API_KEY,
+  walletAddress: process.env.WALLET_ADDRESS,   // must be 0x-prefixed EVM address
+  privateKey: process.env.PRIVATE_KEY,          // EVM private key (login only)
+  chainId: 622112261,                           // Solana
+});
+
+// Buy a token — uses session.tradingPrivateKey automatically
+const result = await buyToken(session, {
+  tokenAddress: 'So11111111111111111111111111111111111111112',
+  amount: formatSolAmount(0.005), // 0.005 SOL = "5000000" lamports
+});
+
+if (result.isSuccess) {
+  console.log('Transaction hash:', result.hash);
+}
+```
+
+## Manual Authentication
+
+If you need more control over the login flow:
+
+```typescript
+import WebSocket from 'ws';
+(globalThis as any).WebSocket = WebSocket; // Required Node.js polyfill
+
+import { createSDK, CryptoUtils } from 'gdex.pro-sdk';
+import { ethers } from 'ethers';
+
+// 1. Initialize SDK (split comma-separated API keys, use first)
+const apiKey = process.env.GDEX_API_KEY!.split(',')[0].trim();
+const sdk = createSDK('https://trade-api.gemach.io/v1', { apiKey });
+
+// 2. Generate session key pair
+const sessionKeyPair = CryptoUtils.getSessionKey();
+const publicKeyHex = Buffer.from(sessionKeyPair.publicKey).toString('hex');
+
+// 3. Generate nonce
+const nonce = CryptoUtils.generateUniqueNumber();
+
+// 4. Sign with EIP-191 personal message (ethers.Wallet.signMessage)
+const wallet = new ethers.Wallet(process.env.PRIVATE_KEY!);
+const address = process.env.WALLET_ADDRESS!;
+const message = `By signing, you agree to GDEX Trading Terms of Use and Privacy Policy. Your GDEX log in message: ${address.toLowerCase()} ${nonce} ${publicKeyHex}`;
+const signature = await wallet.signMessage(message);
+
+// 5. Login
+const userInfo = await sdk.user.login(
+  address,
+  nonce,
+  '0x' + publicKeyHex,  // public key needs 0x prefix
+  signature,
+  '',                    // referral code
+  622112261              // chain ID
+);
+
+// 6. For authenticated GET requests — encrypt session public key with API key
+const encryptedSessionKey = CryptoUtils.encrypt('0x' + publicKeyHex, apiKey);
+
+// 7. For trading POST requests — use session key's PRIVATE key (not wallet key!)
+const tradingPrivateKey = sessionKeyPair.privateKey.toString('hex');
+
+// Now trade:
+const buyResult = await sdk.trading.buy(
+  address,
+  '5000000',             // 0.005 SOL in lamports
+  'TOKEN_ADDRESS_HERE',
+  622112261,             // Solana chain ID
+  tradingPrivateKey      // session private key, NOT wallet private key
+);
 ```
 
 ## Core Capabilities
@@ -23,14 +112,6 @@ npm install gdex.pro-sdk
 
 Get market data, search tokens, analyze trends, and retrieve price information across all supported chains.
 
-**Common operations:**
-- Search tokens by name/symbol
-- Get trending tokens
-- Retrieve token metadata and prices
-- Get native chain prices
-- View chart data
-
-**Example:**
 ```typescript
 import { createSDK } from 'gdex.pro-sdk';
 
@@ -43,42 +124,85 @@ const trending = await sdk.tokens.getTrendingTokens(10);
 const results = await sdk.tokens.searchTokens('PEPE', 10);
 
 // Get token details
-const token = await sdk.tokens.getToken('0xa0b86a33e6776a721c4e3cef6e9e1a7ed6ae6c3a');
+const token = await sdk.tokens.getToken('TOKEN_ADDRESS', chainId);
+
+// Get native chain prices (SOL, ETH, BNB, etc.)
+const prices = await sdk.tokens.getNativePrices();
+
+// Get newest tokens on Solana
+const newest = await sdk.tokens.getNewestTokens(622112261, 1, undefined, 10);
 ```
 
 ### 2. Trading Operations
 
-Execute market orders and limit orders on supported chains.
+Execute market orders and limit orders. **All trading functions require a session** — see Quick Start above.
 
-**Requires:** User address and private key for authenticated operations.
-
-**Common operations:**
-- Buy tokens (market order)
-- Sell tokens (market order)
-- Create limit buy orders
-- Create limit sell orders
-- Update existing orders
-- View trade history
-
-**Example:**
 ```typescript
-// Market buy
-const buyResult = await sdk.trading.buy(
-  '0xUserAddress',
-  '1000000000000000000', // amount in wei
-  '0xTokenAddress',
-  1, // chainId (1 = Ethereum)
-  'private-key'
-);
+import {
+  createAuthenticatedSession,
+  buyToken,
+  sellToken,
+  createLimitBuyOrder,
+  createLimitSellOrder,
+  getOrders,
+  formatSolAmount,
+  formatEthAmount,
+} from 'gdex-trading';
+
+const session = await createAuthenticatedSession();
+
+// Market buy — 0.005 SOL
+const buy = await buyToken(session, {
+  tokenAddress: 'TOKEN_ADDRESS',
+  amount: formatSolAmount(0.005),
+});
+
+// Market sell
+const sell = await sellToken(session, {
+  tokenAddress: 'TOKEN_ADDRESS',
+  amount: '1000000', // amount in smallest unit
+});
+
+// Limit buy order (with optional take-profit/stop-loss)
+const limitBuy = await createLimitBuyOrder(session, {
+  tokenAddress: 'TOKEN_ADDRESS',
+  amount: formatSolAmount(0.01),
+  triggerPrice: '0.002',
+  profitPercent: 20,  // optional: take profit at 20%
+  lossPercent: 10,    // optional: stop loss at 10%
+});
 
 // Limit sell order
-const limitSell = await sdk.trading.createLimitSell(
-  '0xUserAddress',
-  '500000000000000000', // amount
-  '0.002', // trigger price
-  '0xTokenAddress',
-  1, // chainId
-  'private-key'
+const limitSell = await createLimitSellOrder(session, {
+  tokenAddress: 'TOKEN_ADDRESS',
+  amount: '500000000',
+  triggerPrice: '0.005',
+});
+
+// View orders
+const orders = await getOrders(session);
+```
+
+Or using the raw SDK with a session's trading key:
+
+```typescript
+// Market buy with raw SDK
+const buyResult = await session.sdk.trading.buy(
+  session.walletAddress,
+  '5000000',                    // amount in lamports
+  'TOKEN_ADDRESS',
+  622112261,                    // chain ID
+  session.tradingPrivateKey     // session private key!
+);
+
+// Limit sell with raw SDK
+const limitResult = await session.sdk.trading.createLimitSell(
+  session.walletAddress,
+  '500000000',
+  '0.002',                      // trigger price
+  'TOKEN_ADDRESS',
+  622112261,
+  session.tradingPrivateKey
 );
 ```
 
@@ -86,30 +210,33 @@ const limitSell = await sdk.trading.createLimitSell(
 
 Automatically copy trades from top-performing traders on supported chains.
 
-**Supported:** Solana (fully supported), other chains coming soon.
-
-**Common operations:**
-- Create copy trade configuration
-- Update copy trade settings
-- Get list of copy trades
-- View top traders to copy
-
-**Example:**
 ```typescript
-const copyTrade = await sdk.copyTrade.createCopyTrade(
-  '0xYourAddress',
+const session = await createAuthenticatedSession();
+
+// Get top traders (no auth required)
+const topTraders = await session.sdk.copyTrade.getTopTraders(622112261);
+
+// Create copy trade config
+const copyTrade = await session.sdk.copyTrade.createCopyTrade(
+  session.walletAddress,
   '0xTraderAddress',
   'Top Trader Copy',
-  '20', // gas price
-  1, // buy mode: 1=fixed amount, 2=percentage
-  '1000000000', // copy amount (1 SOL = 1*10^9)
-  false, // buy existing tokens
-  '10', // stop loss %
-  '20', // take profit %
-  true, // copy sell
-  [], // excluded DEXes
-  622112261, // Solana chainId
-  'private-key'
+  '20',                         // gas price
+  1,                            // buy mode: 1=fixed amount, 2=percentage
+  '1000000000',                 // copy amount (1 SOL = 1*10^9)
+  false,                        // buy existing tokens
+  '10',                         // stop loss %
+  '20',                         // take profit %
+  true,                         // copy sell
+  [],                           // excluded DEXes
+  622112261,                    // Solana chainId
+  session.tradingPrivateKey     // session private key!
+);
+
+// Get your copy trades
+const copyTrades = await session.sdk.copyTrade.getCopyTradeList(
+  session.walletAddress,
+  session.encryptedSessionKey
 );
 ```
 
@@ -117,36 +244,37 @@ const copyTrade = await sdk.copyTrade.createCopyTrade(
 
 Trade perpetual futures and copy trade on HyperLiquid.
 
-**Common operations:**
-- Deposit/withdraw USDC
-- Place and close positions
-- Create futures copy trades
-- View leaderboard
-
 **Important:** Deposits require a token address and chain ID (Arbitrum: 42161). Withdrawals don't need decimal multiplication.
 
-**Example:**
 ```typescript
+const session = await createAuthenticatedSession();
+
+// Get leaderboard (no auth required)
+const leaders = await session.sdk.hyperLiquid.getHyperliquidLeaderboard('week', 10, 'desc', 'pnl');
+
+// Get mark prices
+const btcPrice = await session.sdk.hyperLiquid.getHyperliquidMarkPrice('BTC');
+
 // Deposit USDC to HyperLiquid (via Arbitrum)
-await sdk.hyperLiquid.hlDeposit(
-  '0xYourAddress',
-  '0xUSDCTokenAddress', // USDC token address
-  '100000000', // 100 USDC (100 * 10^6)
-  42161, // chainId (Arbitrum)
-  'private-key'
+await session.sdk.hyperLiquid.hlDeposit(
+  session.walletAddress,
+  '0xUSDCTokenAddress',
+  '100000000',                  // 100 USDC (100 * 10^6)
+  42161,                        // Arbitrum chainId
+  session.tradingPrivateKey
 );
 
-// Create copy trade
-await sdk.hyperLiquid.hlCreate(
-  '0xYourAddress',
+// Create HL copy trade
+await session.sdk.hyperLiquid.hlCreate(
+  session.walletAddress,
   '0xTraderWallet',
   'HL Copy #1',
-  1, // copy mode: 1=fixed, 2=proportion
-  '100000000', // 100 USDC per order
-  '10', // loss %
-  '20', // profit %
-  false, // opposite copy
-  'private-key'
+  1,                            // copy mode: 1=fixed, 2=proportion
+  '100000000',                  // 100 USDC per order
+  '10',                         // loss %
+  '20',                         // profit %
+  false,                        // opposite copy
+  session.tradingPrivateKey
 );
 ```
 
@@ -154,13 +282,15 @@ await sdk.hyperLiquid.hlCreate(
 
 Stream live token data and market updates.
 
-**Available data:**
-- New tokens discovered
-- Token price/volume updates
-- Network-specific streams
+**Important:** Node.js requires a WebSocket polyfill — this is handled automatically by `createAuthenticatedSession()` and `initSDK()`.
 
-**Example:**
 ```typescript
+import WebSocket from 'ws';
+(globalThis as any).WebSocket = WebSocket; // Only needed if using raw SDK
+
+import { createSDK } from 'gdex.pro-sdk';
+const sdk = createSDK('https://trade-api.gemach.io/v1');
+
 await sdk.connectWebSocketWithChain(622112261); // Solana
 const wsClient = sdk.getWebSocketClient();
 
@@ -172,35 +302,39 @@ wsClient.on('message', (data) => {
     console.log('Token updates:', data.effectedTokensData);
   }
 });
+
+// Disconnect when done
+sdk.disconnect();
 ```
 
 ### 6. User Management
 
-Handle authentication, portfolio tracking, watchlists, and settings.
+Handle portfolio tracking, watchlists, and settings.
 
-**Common operations:**
-- Login/authentication
-- Get user information
-- View holdings/portfolio
-- Manage watchlist
-- Update trading settings
-
-**Example:**
 ```typescript
-// Get user holdings
-const holdings = await sdk.user.getHoldingsList(
-  '0xUserAddress',
-  1, // chainId
-  'session-key'
+import { createAuthenticatedSession, getHoldings, getUserInfo } from 'gdex-trading';
+
+const session = await createAuthenticatedSession();
+
+// Get holdings
+const holdings = await getHoldings(session);
+
+// Get user info
+const userInfo = await getUserInfo(session);
+
+// Get watchlist (uses raw SDK)
+const watchlist = await session.sdk.user.getWatchList(
+  session.walletAddress,
+  session.chainId
 );
 
 // Add to watchlist
-await sdk.user.addWatchList(
-  '0xUserAddress',
-  '0xTokenAddress',
-  true, // true = add, false = remove
-  1, // chainId
-  'private-key'
+await session.sdk.user.addWatchList(
+  session.walletAddress,
+  'TOKEN_ADDRESS',
+  true,                         // true = add, false = remove
+  622112261,
+  session.tradingPrivateKey
 );
 ```
 
@@ -208,68 +342,43 @@ await sdk.user.addWatchList(
 
 | Network | Chain ID | Native Token | Copy Trading | WebSocket |
 |---------|----------|--------------|--------------|-----------|
-| Ethereum | 1 | ETH | Coming Soon | ✅ |
-| Base | 8453 | ETH | Coming Soon | ✅ |
-| BSC | 56 | BNB | Coming Soon | ✅ |
-| **Solana** | 622112261 | SOL | **✅ Supported** | ✅ |
-| Sonic | 146 | S | Coming Soon | ✅ |
-| Sui | 1313131213 | SUI | Coming Soon | ✅ |
-| Nibiru | 6900 | NIBI | Coming Soon | ✅ |
-| Berachain | 80094 | BERA | Coming Soon | ✅ |
-| Optimism | 10 | ETH | Coming Soon | ✅ |
-| Arbitrum | 42161 | ETH | Coming Soon | ✅ |
-| Fraxtal | 252 | frxETH | Coming Soon | ✅ |
+| Ethereum | 1 | ETH | Coming Soon | Yes |
+| Base | 8453 | ETH | Coming Soon | Yes |
+| BSC | 56 | BNB | Coming Soon | Yes |
+| **Solana** | **622112261** | SOL | **Supported** | Yes |
+| Sonic | 146 | S | Coming Soon | Yes |
+| Sui | 1313131213 | SUI | Coming Soon | Yes |
+| Nibiru | 6900 | NIBI | Coming Soon | Yes |
+| Berachain | 80094 | BERA | Coming Soon | Yes |
+| Optimism | 10 | ETH | Coming Soon | Yes |
+| Arbitrum | 42161 | ETH | Coming Soon | Yes |
+| Fraxtal | 252 | frxETH | Coming Soon | Yes |
 
-## Common Workflows
+## Amount Formatting
 
-### Market Analysis Workflow
+Amounts must be in smallest unit as strings:
 
-1. Get trending tokens to identify opportunities
-2. Search for specific tokens of interest
-3. Retrieve detailed token information
-4. View price history/charts
-5. Check trade history
+| Chain | Decimals | Example | Helper |
+|-------|----------|---------|--------|
+| Solana | 9 | 1 SOL = `"1000000000"` | `formatSolAmount(1)` |
+| EVM (ETH/BNB) | 18 | 1 ETH = `"1000000000000000000"` | `formatEthAmount(1)` |
+| USDC | 6 | 100 USDC = `"100000000"` | N/A |
 
-### Trading Workflow
+**HyperLiquid USDC:**
+- Deposits: amount in smallest unit (100 USDC = `"100000000"`)
+- Withdrawals: no decimal multiplication needed
 
-1. Identify target token and amount
-2. For market orders: Call buy/sell directly
-3. For limit orders: Create limit order with price
-4. Monitor order status
-5. Update or cancel as needed
+## Common Gotchas
 
-### Copy Trading Setup
+1. **EVM wallets for all chains** — The SDK uses secp256k1 signing internally, even for Solana. Always use a `0x`-prefixed EVM wallet address.
 
-1. Get list of top traders
-2. Select trader to copy
-3. Configure copy settings (amount, stop loss, take profit)
-4. Create copy trade
-5. Monitor copy trade performance
-6. Update settings as needed
+2. **Session key vs wallet key** — The wallet private key is ONLY for the login signature. Trading uses the session key's private key (`session.tradingPrivateKey`). Passing the wallet key to `sdk.trading.buy()` will fail.
 
-## Amount Formatting Guidelines
+3. **Comma-separated API keys** — The `.env` file may contain multiple API keys separated by commas. Always split and use the first: `apiKey.split(',')[0].trim()`. The `createAuthenticatedSession()` helper handles this automatically.
 
-**Critical:** Amounts must be properly formatted based on token decimals.
+4. **WebSocket polyfill** — Node.js doesn't have a native WebSocket. Add `(globalThis as any).WebSocket = WebSocket` (from `ws` package) before any SDK calls. The `createAuthenticatedSession()` and `initSDK()` helpers handle this automatically.
 
-**For most EVM chains (ETH, BNB, etc.):**
-- 18 decimals
-- 1 token = "1000000000000000000"
-
-**For Solana:**
-- 9 decimals
-- 1 SOL = "1000000000"
-
-**For HyperLiquid USDC:**
-- Deposits: Requires USDC token address + chainId (Arbitrum 42161), amount in smallest unit
-- Withdrawals: No decimal multiplication needed (just the USDC amount as string)
-
-**Use CryptoUtils for formatting:**
-```typescript
-import { CryptoUtils } from 'gdex.pro-sdk';
-
-// Format amount to wei
-const weiAmount = CryptoUtils.formatTokenAmount('1.5', 18);
-```
+5. **Amount units** — All amounts are strings in smallest units (lamports, wei). Use `formatSolAmount()` and `formatEthAmount()` helpers to convert.
 
 ## Error Handling
 
@@ -277,7 +386,10 @@ Always wrap SDK calls in try-catch blocks:
 
 ```typescript
 try {
-  const result = await sdk.trading.buy(/*...*/);
+  const result = await buyToken(session, {
+    tokenAddress: 'TOKEN_ADDRESS',
+    amount: formatSolAmount(0.005),
+  });
   if (result?.isSuccess) {
     console.log('Success:', result.hash);
   } else {
@@ -291,13 +403,13 @@ try {
 ## References
 
 For detailed API documentation, examples, and advanced usage:
-- **references/api_reference.md** - Complete API method reference
-- **references/examples.md** - Code examples for common use cases
+- **references/api_reference.md** — Complete API method reference
+- **references/examples.md** — Code examples for common use cases
 
 ## Security Notes
 
 - **Never log or expose private keys**
+- **Use session keys for trading, not wallet keys**
 - **Validate addresses before transactions**
 - **Test with small amounts first**
-- **Use session keys for non-critical operations**
 - **Verify chain IDs match intended network**
