@@ -74,10 +74,10 @@ const buyResult = await sdk.trading.buy(
 // Limit sell order
 const limitSell = await sdk.trading.createLimitSell(
   '0xUserAddress',
+  '500000000000000000', // amount
+  '0.002', // trigger price
   '0xTokenAddress',
-  '500000000000000000',
-  '0.002', // price
-  1,
+  1, // chainId
   'private-key'
 );
 ```
@@ -123,14 +123,16 @@ Trade perpetual futures and copy trade on HyperLiquid.
 - Create futures copy trades
 - View leaderboard
 
-**Important:** Amounts use USDC decimals (multiply by 10^6 for deposits, but withdrawals don't need multiplication).
+**Important:** Deposits require a token address and chain ID (Arbitrum: 42161). Withdrawals don't need decimal multiplication.
 
 **Example:**
 ```typescript
-// Deposit to HyperLiquid
+// Deposit USDC to HyperLiquid (via Arbitrum)
 await sdk.hyperLiquid.hlDeposit(
   '0xYourAddress',
+  '0xUSDCTokenAddress', // USDC token address
   '100000000', // 100 USDC (100 * 10^6)
+  42161, // chainId (Arbitrum)
   'private-key'
 );
 
@@ -188,15 +190,16 @@ Handle authentication, portfolio tracking, watchlists, and settings.
 // Get user holdings
 const holdings = await sdk.user.getHoldingsList(
   '0xUserAddress',
-  'session-key',
-  1 // chainId
+  1, // chainId
+  'session-key'
 );
 
 // Add to watchlist
 await sdk.user.addWatchList(
   '0xUserAddress',
   '0xTokenAddress',
-  1,
+  true, // true = add, false = remove
+  1, // chainId
   'private-key'
 );
 ```
@@ -257,8 +260,8 @@ await sdk.user.addWatchList(
 - 1 SOL = "1000000000"
 
 **For HyperLiquid USDC:**
-- Deposits: 6 decimals (100 USDC = "100000000")
-- Withdrawals: No decimal multiplication needed
+- Deposits: Requires USDC token address + chainId (Arbitrum 42161), amount in smallest unit
+- Withdrawals: No decimal multiplication needed (just the USDC amount as string)
 
 **Use CryptoUtils for formatting:**
 ```typescript

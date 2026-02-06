@@ -1,0 +1,23 @@
+{
+  "name": "gdex-trading",
+  "version": "1.0.0",
+  "description": "GDEX decentralized exchange trading bot using gdex.pro-sdk",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["gdex", "trading", "dex", "crypto", "solana", "ethereum"],
+  "license": "MIT",
+  "dependencies": {
+    "gdex.pro-sdk": "latest",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}

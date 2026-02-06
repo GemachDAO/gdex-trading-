@@ -177,9 +177,11 @@ async function createLimitBuyOrder() {
   
   const result = await sdk.trading.createLimitBuy(
     userAddress,
-    tokenAddress,
     '100000000000000000', // 0.1 ETH
-    '0.001', // Limit price
+    '0.001', // Trigger price
+    20, // Take profit %
+    10, // Stop loss %
+    tokenAddress,
     1, // Ethereum
     privateKey
   );
@@ -207,15 +209,19 @@ async function manageLimitOrders() {
     sessionKey
   );
   
-  console.log('Active orders:', orders.length);
+  console.log('Active orders:', orders);
   
   // Update first order if exists
-  if (orders.length > 0) {
+  if (orders && orders.length > 0) {
     const updatedOrder = await sdk.trading.updateOrder(
       userAddress,
       orders[0].id,
-      '0.0015', // New price
-      1,
+      orders[0].amount, // keep same amount
+      '0.0015', // New trigger price
+      20, // profit %
+      10, // loss %
+      false, // not deleting
+      1, // Ethereum
       privateKey
     );
     
@@ -238,11 +244,11 @@ async function setupSolanaCopyTrade() {
   const privateKey = 'your-private-key';
   
   // First, get top traders
-  const topTraders = await sdk.copyTrade.getTopTraders();
-  console.log('Top 5 traders:', topTraders.slice(0, 5));
+  const topTraders = await sdk.copyTrade.getTopTraders(622112261); // Solana chainId
+  console.log('Top 5 traders:', topTraders?.slice(0, 5));
   
   // Select a trader to copy
-  const targetTrader = topTraders[0].address;
+  const targetTrader = topTraders?.[0]?.address ?? '';
   
   // Create copy trade
   const result = await sdk.copyTrade.createCopyTrade(
@@ -282,19 +288,17 @@ async function monitorCopyTrades() {
   // Get all copy trades
   const copyTrades = await sdk.copyTrade.getCopyTradeList(
     userAddress,
-    sessionKey,
-    622112261 // Solana
+    sessionKey
   );
   
-  console.log('Active copy trades:', copyTrades.length);
+  console.log('Active copy trades:', copyTrades);
   
   // Update copy trade settings
-  if (copyTrades.length > 0) {
+  if (copyTrades) {
     const ct = copyTrades[0];
     
     const updated = await sdk.copyTrade.updateCopyTrade(
       userAddress,
-      ct.id,
       ct.targetAddress,
       ct.name,
       '25', // increase gas price
@@ -303,10 +307,11 @@ async function monitorCopyTrades() {
       false,
       '15', // tighter stop loss
       '30', // higher take profit
-      true,
-      [],
       false, // not deleting
       false, // not changing status
+      ct.id, // copyTradeId
+      true, // copySell
+      [], // excludedDexNumbers
       622112261,
       privateKey
     );
@@ -329,11 +334,13 @@ async function startHyperLiquidCopyTrade() {
   const userAddress = '0xYourAddress';
   const privateKey = 'your-private-key';
   
-  // Step 1: Deposit USDC
+  // Step 1: Deposit USDC (via Arbitrum)
   console.log('Depositing 500 USDC...');
   const deposit = await sdk.hyperLiquid.hlDeposit(
     userAddress,
+    '0xUSDCTokenAddress', // USDC contract on Arbitrum
     '500000000', // 500 USDC (multiply by 10^6)
+    42161, // Arbitrum chainId
     privateKey
   );
   
@@ -389,13 +396,14 @@ async function manageHLPositions() {
   const userAddress = '0xYourAddress';
   const privateKey = 'your-private-key';
   
-  // Close specific position
+  // Close specific position (close a long by selling)
   const order = await sdk.hyperLiquid.hlPlaceOrder(
     userAddress,
     'ETH',
-    false, // sell/close long
-    '1', // size
+    false, // isLong=false to close a long
     '3500', // limit price
+    '1', // size
+    true, // reduceOnly=true to close position
     privateKey
   );
   
@@ -510,8 +518,8 @@ async function analyzePortfolio() {
   // Get holdings across Ethereum
   const ethHoldings = await sdk.user.getHoldingsList(
     userAddress,
-    sessionKey,
-    1 // Ethereum
+    1, // Ethereum chainId
+    sessionKey
   );
   
   console.log('Ethereum Holdings:', ethHoldings.length);
@@ -545,7 +553,6 @@ async function manageWatchlist() {
   // Get current watchlist
   const watchlist = await sdk.user.getWatchList(
     userAddress,
-    sessionKey,
     1 // Ethereum
   );
   
@@ -556,7 +563,8 @@ async function manageWatchlist() {
   const added = await sdk.user.addWatchList(
     userAddress,
     newToken,
-    1,
+    true, // true = add, false = remove
+    1, // Ethereum
     privateKey
   );
   
