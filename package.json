@@ -11,7 +11,9 @@
     "test": "ts-node src/test-suite.ts",
     "test:deposit": "ts-node src/test-deposit.ts",
     "test:solana-trade": "ts-node src/test-solana-trade.ts",
+    "test:hyperliquid": "ts-node src/test-hyperliquid-trade.ts",
     "check:balance": "ts-node src/check-arbitrum-balance.ts",
+    "check:positions": "ts-node src/check-hyperliquid-positions.ts",
     "verify": "ts-node src/verify-config.ts",
     "deposit": "ts-node src/deposit-hyperliquid.ts",
     "deposit:correct": "ts-node src/deposit-correct-flow.ts"
@@ -26,6 +28,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@gdex/sdk": "github:TheArcadiaGroup/gdex-sdk",
     "@solana/web3.js": "^1.98.4",
     "@types/ws": "^8.18.1",
     "bs58": "^6.0.0",
