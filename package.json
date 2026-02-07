@@ -10,6 +10,7 @@
     "clean": "rm -rf dist",
     "test": "ts-node src/test-suite.ts",
     "test:deposit": "ts-node src/test-deposit.ts",
+    "test:solana-trade": "ts-node src/test-solana-trade.ts",
     "check:balance": "ts-node src/check-arbitrum-balance.ts",
     "verify": "ts-node src/verify-config.ts",
     "deposit": "ts-node src/deposit-hyperliquid.ts",
