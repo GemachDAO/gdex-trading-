@@ -244,7 +244,76 @@ const copyTrades = await session.sdk.copyTrade.getCopyTradeList(
 
 Trade perpetual futures and copy trade on HyperLiquid.
 
-**Important:** Deposits require a token address and chain ID (Arbitrum: 42161). Withdrawals don't need decimal multiplication.
+**CRITICAL: GDEX uses custodial deposits.** Do NOT use `hlDeposit()` directly - it will fail with "Unauthorized" errors!
+
+#### Correct Deposit Flow (Custodial)
+
+GDEX provides a deposit address for each user. Send USDC to this address on Arbitrum, and GDEX automatically deposits it to HyperLiquid.
+
+```typescript
+const session = await createAuthenticatedSession();
+
+// Step 1: Get your GDEX deposit address (custodial)
+const userInfo = await session.sdk.user.getUserInfo(
+  session.walletAddress,
+  session.encryptedSessionKey,
+  42161  // Arbitrum chain ID
+);
+const depositAddress = userInfo.address;
+
+console.log('Send USDC to:', depositAddress);
+
+// Step 2: Send USDC to deposit address (standard ERC-20 transfer)
+import { ethers } from 'ethers';
+
+const ARBITRUM_RPC = 'https://arb1.arbitrum.io/rpc';
+const USDC_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
+
+const provider = new ethers.JsonRpcProvider(ARBITRUM_RPC);
+const wallet = new ethers.Wallet(process.env.PRIVATE_KEY!, provider);
+
+const usdc = new ethers.Contract(
+  USDC_ADDRESS,
+  ['function transfer(address to, uint256 amount) returns (bool)'],
+  wallet
+);
+
+// Send 5 USDC (minimum deposit)
+const amount = ethers.parseUnits('5', 6); // USDC has 6 decimals
+const tx = await usdc.transfer(depositAddress, amount);
+await tx.wait();
+
+console.log('USDC sent:', tx.hash);
+
+// Step 3: Wait for GDEX to process (1-10 minutes)
+const initialBalance = await session.sdk.hyperLiquid.getHyperliquidUsdcBalance(
+  session.walletAddress
+);
+
+// Poll every 30 seconds
+while (true) {
+  await new Promise(resolve => setTimeout(resolve, 30000));
+
+  const currentBalance = await session.sdk.hyperLiquid.getHyperliquidUsdcBalance(
+    session.walletAddress
+  );
+
+  if (currentBalance > initialBalance) {
+    console.log('Deposit complete! Balance:', currentBalance);
+    break;
+  }
+}
+```
+
+#### Deposit Requirements
+
+- **Minimum**: 5 USDC
+- **Network**: Arbitrum only (chain ID: 42161)
+- **USDC Contract**: `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`
+- **Gas**: ETH on Arbitrum (~$0.10-0.50)
+- **Processing Time**: 1-10 minutes
+
+#### Other HyperLiquid Operations
 
 ```typescript
 const session = await createAuthenticatedSession();
@@ -254,13 +323,27 @@ const leaders = await session.sdk.hyperLiquid.getHyperliquidLeaderboard('week', 
 
 // Get mark prices
 const btcPrice = await session.sdk.hyperLiquid.getHyperliquidMarkPrice('BTC');
+const prices = await session.sdk.hyperLiquid.getMultipleHyperliquidMarkPrices(['BTC', 'ETH', 'SOL']);
 
-// Deposit USDC to HyperLiquid (via Arbitrum)
-await session.sdk.hyperLiquid.hlDeposit(
+// Check balances
+const gbotBalance = await session.sdk.hyperLiquid.getGbotUsdcBalance(session.walletAddress);
+const hlBalance = await session.sdk.hyperLiquid.getHyperliquidUsdcBalance(session.walletAddress);
+
+// Place order (long BTC)
+await session.sdk.hyperLiquid.hlPlaceOrder(
   session.walletAddress,
-  '0xUSDCTokenAddress',
-  '100000000',                  // 100 USDC (100 * 10^6)
-  42161,                        // Arbitrum chainId
+  'BTC',                        // coin
+  true,                         // isLong (true=long, false=short)
+  '50000',                      // price
+  '0.1',                        // size
+  false,                        // reduceOnly (false=open new, true=close only)
+  session.tradingPrivateKey
+);
+
+// Withdraw from HyperLiquid to Arbitrum
+await session.sdk.hyperLiquid.hlWithdraw(
+  session.walletAddress,
+  '10',                         // amount (no decimals needed)
   session.tradingPrivateKey
 );
 
@@ -277,6 +360,23 @@ await session.sdk.hyperLiquid.hlCreate(
   session.tradingPrivateKey
 );
 ```
+
+#### ❌ WRONG: Don't Use hlDeposit()
+
+```typescript
+// DON'T USE THIS - It will fail!
+await session.sdk.hyperLiquid.hlDeposit(
+  session.walletAddress,
+  tokenAddress,
+  amount,
+  chainId,
+  privateKey
+);
+// Returns "Unauthorized" or "Insufficient balance" errors
+// This is not the intended GDEX deposit flow
+```
+
+**Always use the custodial deposit flow documented above!**
 
 ### 5. Real-Time WebSocket Data
 
@@ -362,23 +462,30 @@ Amounts must be in smallest unit as strings:
 |-------|----------|---------|--------|
 | Solana | 9 | 1 SOL = `"1000000000"` | `formatSolAmount(1)` |
 | EVM (ETH/BNB) | 18 | 1 ETH = `"1000000000000000000"` | `formatEthAmount(1)` |
-| USDC | 6 | 100 USDC = `"100000000"` | N/A |
+| USDC (Arbitrum) | 6 | 5 USDC = `5000000` (5 * 1e6) | `ethers.parseUnits('5', 6)` |
 
-**HyperLiquid USDC:**
-- Deposits: amount in smallest unit (100 USDC = `"100000000"`)
-- Withdrawals: no decimal multiplication needed
+**Critical: Use `1e6` not `1^6`!**
+- Correct: `5 * 1e6` = 5,000,000 (exponential notation)
+- Wrong: `5 * 1^6` = 5 (exponentiation always equals 1)
+
+**HyperLiquid:**
+- Deposits: Use custodial flow (send USDC to deposit address)
+- Minimum: 5 USDC
+- Withdrawals: `hlWithdraw()` - no decimal multiplication needed
 
 ## Common Gotchas
 
-1. **EVM wallets for all chains** — The SDK uses secp256k1 signing internally, even for Solana. Always use a `0x`-prefixed EVM wallet address.
+1. **HyperLiquid deposits use custodial flow** — Do NOT use `sdk.hyperLiquid.hlDeposit()` directly! It will fail with "Unauthorized" errors. Instead, get your deposit address from `getUserInfo()` and send USDC to that address on Arbitrum. GDEX processes it automatically (1-10 minutes). Minimum: 5 USDC. See section 4 above for complete implementation.
 
-2. **Session key vs wallet key** — The wallet private key is ONLY for the login signature. Trading uses the session key's private key (`session.tradingPrivateKey`). Passing the wallet key to `sdk.trading.buy()` will fail.
+2. **EVM wallets for all chains** — The SDK uses secp256k1 signing internally, even for Solana. Always use a `0x`-prefixed EVM wallet address.
 
-3. **Comma-separated API keys** — The `.env` file may contain multiple API keys separated by commas. Always split and use the first: `apiKey.split(',')[0].trim()`. The `createAuthenticatedSession()` helper handles this automatically.
+3. **Session key vs wallet key** — The wallet private key is ONLY for the login signature. Trading uses the session key's private key (`session.tradingPrivateKey`). Passing the wallet key to `sdk.trading.buy()` will fail.
 
-4. **WebSocket polyfill** — Node.js doesn't have a native WebSocket. Add `(globalThis as any).WebSocket = WebSocket` (from `ws` package) before any SDK calls. The `createAuthenticatedSession()` and `initSDK()` helpers handle this automatically.
+4. **Comma-separated API keys** — The `.env` file may contain multiple API keys separated by commas. Always split and use the first: `apiKey.split(',')[0].trim()`. The `createAuthenticatedSession()` helper handles this automatically.
 
-5. **Amount units** — All amounts are strings in smallest units (lamports, wei). Use `formatSolAmount()` and `formatEthAmount()` helpers to convert.
+5. **WebSocket polyfill** — Node.js doesn't have a native WebSocket. Add `(globalThis as any).WebSocket = WebSocket` (from `ws` package) before any SDK calls. The `createAuthenticatedSession()` and `initSDK()` helpers handle this automatically.
+
+6. **Amount units** — All amounts are strings in smallest units (lamports, wei). Use `formatSolAmount()` and `formatEthAmount()` helpers to convert. For USDC: multiply by `1e6` (not `1^6`!) - 5 USDC = `5 * 1e6` = 5,000,000 units.
 
 ## Error Handling
 
