@@ -5,11 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run Commands
 
 ```bash
-npm run build          # TypeScript compile (tsc) → dist/
-npm run dev            # Run with ts-node (no build step)
-npm start              # Run compiled dist/index.js
-npm test               # Run test suite (ts-node src/test-suite.ts)
-npm run clean          # Remove dist/
+npm run build               # TypeScript compile (tsc) → dist/
+npm run dev                 # Run with ts-node (no build step)
+npm start                   # Run compiled dist/index.js
+npm test                    # Run test suite (ts-node src/test-suite.ts)
+npm run clean               # Remove dist/
+npm run deposit:correct 5   # Deposit 5 USDC to HyperLiquid (minimum)
+npm run check:balance       # Check Arbitrum on-chain balances
+npm run verify              # Verify .env configuration
 ```
 
 ## Architecture
@@ -25,6 +28,7 @@ This is a TypeScript trading bot built on the `gdex.pro-sdk` package for the GDE
 - `src/config.ts` — Loads `.env` via dotenv, exports `Config` interface, `loadConfig()`, `validateConfig()`, and `CHAIN_NAMES` lookup map
 - `src/wallet.ts` — Wallet generation for Solana (bs58/Keypair) and EVM (ethers), `.env` persistence, chain-type detection helpers (`isSolanaChain`, `isEVMChain`)
 - `src/test-suite.ts` — Comprehensive SDK test suite (8 phases): tokens, user, trading, copyTrade, hyperLiquid, WebSocket, trading execution, CryptoUtils
+- **`src/deposit-correct-flow.ts`** — ✅ **Working custodial deposit implementation** (use this for deposits!)
 
 **Key pattern — `GDEXSession`:**
 
@@ -75,3 +79,91 @@ Configuration is in `.env` (see `.env.example`). Key variables:
 ## Reference Docs
 
 The `references/` directory contains SDK API reference and code examples that are useful when extending functionality.
+
+## HyperLiquid Deposits (CRITICAL - READ THIS!)
+
+**IMPORTANT**: GDEX uses a **custodial wallet system** for deposits. Do NOT use `sdk.hyperLiquid.hlDeposit()` directly!
+
+### ✅ Correct Deposit Flow (Custodial)
+
+1. **Get your GDEX deposit address** (one-time setup per user)
+2. **Send USDC to that address** on Arbitrum (standard ERC-20 transfer)
+3. **GDEX processes automatically** (1-10 minutes)
+4. **Funds appear in HyperLiquid** balance
+
+### Implementation
+
+```typescript
+// 1. Authenticate
+const session = await createAuthenticatedSession({
+  apiUrl: config.apiUrl,
+  apiKey: config.apiKey,
+  walletAddress: config.walletAddress,
+  privateKey: config.privateKey,
+  chainId: 42161, // Arbitrum
+});
+
+// 2. Get deposit address
+const userInfo = await sdk.user.getUserInfo(
+  session.walletAddress,
+  session.encryptedSessionKey,
+  42161
+);
+const depositAddress = userInfo.address; // Your custodial deposit address
+
+// 3. Send USDC (Arbitrum)
+const provider = new ethers.JsonRpcProvider('https://arb1.arbitrum.io/rpc');
+const wallet = new ethers.Wallet(config.privateKey, provider);
+const usdc = new ethers.Contract(
+  '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  ['function transfer(address to, uint256 amount) returns (bool)'],
+  wallet
+);
+
+const amount = ethers.parseUnits('5', 6); // 5 USDC (minimum)
+const tx = await usdc.transfer(depositAddress, amount);
+await tx.wait();
+
+// 4. Wait for GDEX to process (poll every 30 seconds)
+const initialBalance = await sdk.hyperLiquid.getHyperliquidUsdcBalance(session.walletAddress);
+while (true) {
+  await new Promise(r => setTimeout(r, 30000));
+  const balance = await sdk.hyperLiquid.getHyperliquidUsdcBalance(session.walletAddress);
+  if (balance > initialBalance) {
+    console.log('Deposit complete!', balance);
+    break;
+  }
+}
+```
+
+### Quick Command
+
+```bash
+npm run deposit:correct 5  # Deposit 5 USDC (minimum)
+```
+
+This uses `src/deposit-correct-flow.ts` which implements the full flow automatically.
+
+### Requirements
+
+- **Minimum**: 5 USDC
+- **Network**: Arbitrum (chain ID: 42161)
+- **USDC Contract**: `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`
+- **Gas**: ETH on Arbitrum (~$0.10-0.50)
+- **Processing**: 1-10 minutes
+
+### ❌ WRONG Method (Don't Use!)
+
+```typescript
+// DON'T USE THIS - It doesn't work!
+await sdk.hyperLiquid.hlDeposit(address, tokenAddress, amount, chainId, privateKey);
+```
+
+**Why it fails:**
+- Requires token approval (not handled)
+- Returns "Unauthorized" or "Insufficient balance" errors
+- Not the intended GDEX deposit flow
+
+**Always use the custodial deposit flow documented above!**
+
+See `DEPOSIT_GUIDE.md` for complete details and troubleshooting.

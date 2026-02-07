@@ -8,7 +8,12 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "clean": "rm -rf dist",
-    "test": "ts-node src/test-suite.ts"
+    "test": "ts-node src/test-suite.ts",
+    "test:deposit": "ts-node src/test-deposit.ts",
+    "check:balance": "ts-node src/check-arbitrum-balance.ts",
+    "verify": "ts-node src/verify-config.ts",
+    "deposit": "ts-node src/deposit-hyperliquid.ts",
+    "deposit:correct": "ts-node src/deposit-correct-flow.ts"
   },
   "keywords": [
     "gdex",

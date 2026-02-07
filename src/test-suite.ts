@@ -313,7 +313,11 @@ async function testCopyTradeOperations(sdk: ReturnType<typeof createSDK>, config
 // Phase 5: HyperLiquid Operations
 // ============================================================================
 
-async function testHyperLiquidOperations(sdk: ReturnType<typeof createSDK>, config: Config) {
+async function testHyperLiquidOperations(
+  sdk: ReturnType<typeof createSDK>,
+  config: Config,
+  session: GDEXSession | null
+) {
   console.log('\n\u2501\u2501\u2501 HyperLiquid Operations \u2501\u2501\u2501\n');
 
   // 5.1 Leaderboard (no auth required)
@@ -409,6 +413,50 @@ async function testHyperLiquidOperations(sdk: ReturnType<typeof createSDK>, conf
     logResult('getHyperliquidTradeHistory', true, `Fetched trade history`);
   } catch (err: any) {
     logResult('getHyperliquidTradeHistory', false, err.message);
+  }
+
+  // 5.10 Test Deposit (requires session and minimum 10 USDC)
+  if (!session) {
+    console.log('  ⚠ Skipping deposit test - session not available (login required)\n');
+    return;
+  }
+
+  const ARBITRUM_CHAIN_ID = 42161;
+  const ARBITRUM_USDC_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
+  const MIN_DEPOSIT = 10; // USDC
+
+  try {
+    const depositAmount = Math.floor(MIN_DEPOSIT * 1e6); // 10 USDC minimum
+
+    console.log('  Testing HyperLiquid deposit...');
+    console.log(`    Amount: ${MIN_DEPOSIT} USDC (minimum)`);
+    console.log(`    Using session trading key (like buy/sell)`);
+    console.log('    Note: Need ≥10 USDC on Arbitrum + ETH for gas');
+
+    const depositResult = await sdk.hyperLiquid.hlDeposit(
+      session.walletAddress,
+      ARBITRUM_USDC_ADDRESS,
+      depositAmount.toString(),
+      ARBITRUM_CHAIN_ID,
+      session.tradingPrivateKey  // KEY: Use session trading key!
+    );
+
+    if (depositResult?.isSuccess) {
+      logResult('hlDeposit', true, `Deposit successful! ${depositResult.message}`);
+      console.log('    ✅ USDC deposited to HyperLiquid account');
+    } else {
+      logResult('hlDeposit', false, `${depositResult?.message ?? 'Unknown error'}`);
+      console.log('    Requirements: USDC balance on Arbitrum + ETH for gas fees');
+    }
+  } catch (err: any) {
+    logResult('hlDeposit', false, err.message);
+    if (err.response?.data) {
+      console.log(`    Error: ${JSON.stringify(err.response.data)}`);
+    }
+    console.log('    Common issues:');
+    console.log('      - Insufficient USDC balance on Arbitrum');
+    console.log('      - Insufficient ETH for gas fees');
+    console.log('      - Wallet not authorized or incorrect private key');
   }
 }
 
@@ -663,7 +711,7 @@ export async function runTestSuite() {
   await testCopyTradeOperations(sdk, config);
 
   // Phase 5: HyperLiquid Operations
-  await testHyperLiquidOperations(sdk, config);
+  await testHyperLiquidOperations(sdk, config, session);
 
   // Phase 6: WebSocket Connection
   await testWebSocketConnection(sdk, config);
