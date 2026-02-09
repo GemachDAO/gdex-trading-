@@ -16,7 +16,9 @@
     "check:positions": "ts-node src/check-hyperliquid-positions.ts",
     "verify": "ts-node src/verify-config.ts",
     "deposit": "ts-node src/deposit-hyperliquid.ts",
-    "deposit:correct": "ts-node src/deposit-correct-flow.ts"
+    "deposit:correct": "ts-node src/deposit-correct-flow.ts",
+    "solana:swap": "ts-node src/solana-meme-swap.ts",
+    "solana:scan": "ts-node src/solana-scanner.ts"
   },
   "keywords": [
     "gdex",

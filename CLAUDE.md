@@ -10,6 +10,8 @@ npm run dev                 # Run with ts-node (no build step)
 npm start                   # Run compiled dist/index.js
 npm test                    # Run test suite (ts-node src/test-suite.ts)
 npm run clean               # Remove dist/
+npm run solana:swap         # Buy & sell a Solana meme coin (pump.fun supported)
+npm run solana:scan         # Real-time Solana token scanner dashboard
 npm run deposit:correct 5   # Deposit 5 USDC to HyperLiquid (minimum)
 npm run check:balance       # Check Arbitrum on-chain balances
 npm run verify              # Verify .env configuration
@@ -29,6 +31,8 @@ This is a TypeScript trading bot built on the `gdex.pro-sdk` package for the GDE
 - `src/wallet.ts` — Wallet generation for Solana (bs58/Keypair) and EVM (ethers), `.env` persistence, chain-type detection helpers (`isSolanaChain`, `isEVMChain`)
 - `src/test-suite.ts` — Comprehensive SDK test suite (8 phases): tokens, user, trading, copyTrade, hyperLiquid, WebSocket, trading execution, CryptoUtils
 - **`src/deposit-correct-flow.ts`** — ✅ **Working custodial deposit implementation** (use this for deposits!)
+- **`src/solana-meme-swap.ts`** — ✅ **Working Solana meme coin buy/sell** (verified with real txs)
+- **`src/solana-scanner.ts`** — ✅ **Real-time Solana token scanner dashboard** (WebSocket + polling + inline trading)
 
 **Key pattern — `GDEXSession`:**
 
@@ -75,6 +79,75 @@ Configuration is in `.env` (see `.env.example`). Key variables:
 - `WALLET_ADDRESS`, `PRIVATE_KEY` — EVM wallet credentials (auto-generated if missing; must be `0x`-prefixed)
 - `GDEX_API_KEY` — API key (may be comma-separated; first key used for encryption)
 - `DEFAULT_CHAIN_ID` — defaults to Solana (`622112261`)
+
+## Solana Trading (VERIFIED WORKING)
+
+**SDK**: `gdex.pro-sdk` | **Endpoint**: `https://trade-api.gemach.io/v1` | **Chain ID**: `622112261`
+
+Buy/sell meme coins on Solana via `buyToken()` / `sellToken()` from `src/trading.ts`. **Pump.fun tokens work** even before DEX graduation (`isListedOnDex: false` is fine).
+
+```typescript
+// Auth on Solana (fallback to Arbitrum if needed)
+let session;
+try {
+  session = await createAuthenticatedSession({ chainId: 622112261 });
+} catch {
+  session = await createAuthenticatedSession({ chainId: 42161 });
+}
+
+// Find tokens, sort by activity
+const newest = await session.sdk.tokens.getNewestTokens(622112261, 1, undefined, 20);
+const sorted = [...newest].sort((a, b) => (b.txCount || 0) - (a.txCount || 0));
+const target = sorted[0];
+
+// Buy
+const buy = await buyToken(session, {
+  tokenAddress: target.address,
+  amount: formatSolAmount(0.005), // "5000000" lamports
+  chainId: 622112261,
+});
+
+// Sell
+const sell = await sellToken(session, {
+  tokenAddress: target.address,
+  amount: formatSolAmount(0.005),
+  chainId: 622112261,
+});
+```
+
+**Verified transactions:**
+- Buy COMPOZY (pump.fun, 75% bonding curve): `3msBpERN...AUXC`
+- Sell COMPOZY: `49PJtJWf...qHW`
+- Buy SSI6900 (pump.fun): `4TiPBwDj...pAgP`
+- Sell SSI6900: `2ygnTv7S...YThW`
+
+**Token selection (best practices):**
+- Sort by `txCount` (higher = more activity = better liquidity)
+- Prefer higher `bondingCurveProgress` (more reserves in pool)
+- `isListedOnDex` is NOT required — pump.fun bonding curve tokens trade fine
+- Check `marketCap > 1000` to avoid dead tokens
+
+**Quick command:** `npm run solana:swap`
+
+## HyperLiquid Trading Status (CRITICAL - READ THIS!)
+
+### What WORKS via API:
+- Closing positions: `hlPlaceOrder` with `reduceOnly=true` returns `{ isSuccess: true }`
+- Balance queries: `getHyperliquidUsdcBalance()`, `getHyperliquidClearinghouseState()`
+- Copy trading: `hlCreate()` (opens positions indirectly)
+- Close all: `hlCloseAll()`
+- Withdrawals: `hlWithdraw()`
+
+### What DOESN'T work via API:
+- `hlPlaceOrder` with `reduceOnly=false` → error 102: "Now only support close position"
+- `hlCreateOrder` (any params) → "Sent order failed" (broken endpoint)
+- `hlDeposit()` → "Unauthorized" (use custodial flow instead)
+
+### New @gdex/sdk (`github:TheArcadiaGroup/gdex-sdk`)
+- Installed at `node_modules/@gdex/sdk/`
+- Targets `https://api.gdex.io/v1` which is **NOT LIVE YET** (NXDOMAIN)
+- Once live, `client.createOrder()` should support opening leveraged positions
+- Different payload format (includes apiKey in encrypted payload) - incompatible with old API
 
 ## Reference Docs
 
