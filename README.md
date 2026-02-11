@@ -1,40 +1,93 @@
 # GDEX Trading Bot
 
-TypeScript trading bot for [GDEX](https://gdex.pro) decentralized exchange. Features multi-chain trading, HyperLiquid perpetuals, and **working custodial deposits**.
+TypeScript trading bot for [GDEX](https://gdex.pro) decentralized exchange with **revolutionary universal custodial wallet system**.
+
+## 🌟 Key Features
+
+✅ **Universal EVM Wallet** - ONE custodial address works for ALL EVM chains
+✅ **Base Trading** - Fully working with verified transactions
+✅ **Solana Meme Coins** - Including pump.fun pre-DEX tokens
+✅ **Multi-Chain** - Arbitrum, Ethereum, BSC, Optimism, and more
+✅ **Real-Time Data** - WebSocket streams + comprehensive analytics
+⚠️ **HyperLiquid Futures** - Opening positions broken (closing works, use copy trading)
 
 ## 🚀 Quick Start
 
 ```bash
 npm install
 cp .env.example .env  # Add your wallet & API key
-npm test              # Run test suite (35+ tests)
+
+# Get wallet addresses for funding
+npm run wallets:qr    # Display QR codes
+
+# Test trading
+npm run solana:swap   # Trade Solana meme coins
+npm run base:trade    # Trade on Base
 ```
 
-## 💰 Depositing to HyperLiquid (**IMPORTANT!**)
+## 🔑 Universal Custodial Wallet System (**CRITICAL!**)
 
-**GDEX uses custodial deposits.** Don't call `hlDeposit()` directly!
+GDEX uses TWO wallet addresses:
 
-### ✅ Correct Method
+### 1. Your Control Wallet (from `.env`)
+- You control with private key
+- Used for authentication only
+- Example: `0x01779499970726ff4C111dDF58A2CA6c366b0E20`
+
+### 2. GDEX Custodial Wallets
+- **ONE address for ALL EVM chains** ← Revolutionary!
+- Different address for Solana
+- Send funds HERE to trade
+- Auto-processed in 1-10 minutes
+
+### Get Your Addresses
 
 ```bash
-# Deposit 5 USDC (minimum) to HyperLiquid
-npm run deposit:correct 5
+npm run wallets:qr  # Shows QR codes for easy phone wallet funding
 ```
 
-This will:
-1. Get your GDEX deposit address (custodial)
-2. Send USDC from your wallet to that address (on Arbitrum)
-3. Wait for GDEX to process (1-10 minutes)
-4. Confirm when funds appear in HyperLiquid
+### Funding for Trading
 
-**See [DEPOSIT_GUIDE.md](./DEPOSIT_GUIDE.md) for complete details!**
+**For ANY EVM chain (Base, Arbitrum, Ethereum, BSC, etc.):**
+1. Get your custodial address (same for all EVM chains!)
+2. Send ETH, USDC, or tokens to that address
+3. Use the network you want to trade on
+4. Trade after GDEX processes (1-10 min)
 
-### ❌ Wrong Method (Don't Use)
+**For Solana:**
+1. Use separate Solana custodial address
+2. Send SOL
+3. Trade meme coins (pump.fun works!)
 
-```typescript
-// DON'T USE - This doesn't work!
-await sdk.hyperLiquid.hlDeposit(address, tokenAddr, amount, chainId, privateKey);
+## 🎯 Verified Trading Examples
+
+### Base Chain (✅ Working)
+```bash
+npm run base:trade
 ```
+Verified transactions:
+- Buy: `0x26663c53c2145e5d95070150ad69385d7cc96f176497e2b5e2d138f0f45e069f`
+- Sell: `0x9df24b633c4f620f421edc19cbdf70252105ea381fd5fbc8e730bc7fd2642f4b`
+
+### Solana Meme Coins (✅ Working)
+```bash
+npm run solana:swap  # Buy & sell pump.fun tokens
+npm run solana:scan  # Real-time scanner with inline trading
+```
+
+## ⚠️ HyperLiquid Perpetual Futures
+
+**Only leveraged futures OPENING is broken.** Spot trading on Arbitrum works perfectly!
+
+✅ **What Works:**
+- Closing positions
+- Balance queries
+- Copy trading (opens positions indirectly)
+- Withdrawals
+
+❌ **What's Broken:**
+- Opening leveraged positions via `hlPlaceOrder` or `hlCreateOrder`
+- Use copy trading as workaround!
 
 ## 📚 Documentation
 
