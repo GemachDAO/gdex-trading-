@@ -671,6 +671,366 @@ Track what works and what needs backend fixes. Update this as endpoints go live.
 
 **Impact:** Without `getPriceHistory`, the scanner can't show OHLCV charts. Currently uses sparklines from polled snapshots as a workaround. Once the price history endpoint goes live, we can add proper candlestick charts.
 
+## Statistical Analysis & Data Mining
+
+The SDK provides extensive data for building analytics, trading algorithms, and monitoring systems. Run `npm run explore:data` to see all available data points.
+
+### Token Analytics Data
+
+**Price & Volume Metrics:**
+```typescript
+const token = await sdk.tokens.getNewestTokens(622112261, 1, undefined, 20);
+// Returns rich token objects with:
+{
+  // Price data
+  priceUsd: number,           // Current USD price
+  priceNative: number,        // Price in native token (SOL/ETH/BNB)
+  marketCap: number,          // USD market capitalization
+  liquidityUsd: number,       // Total liquidity in USD
+  liquidityEth: number,       // Liquidity in native token
+
+  // Volume tracking (5min, 1hr, 6hr, 24hr)
+  volumes: {
+    m5: number,    // 5-minute volume
+    h1: number,    // 1-hour volume
+    h6: number,    // 6-hour volume
+    h24: number    // 24-hour volume
+  },
+
+  // Price changes (same timeframes)
+  priceChanges: {
+    m5: number,    // 5min price change %
+    h1: number,    // 1hr price change %
+    h6: number,    // 6hr price change %
+    h24: number    // 24hr price change %
+  },
+
+  // Transaction metrics
+  txCount: number,            // Total transaction count
+  data24h: {
+    txCount: number,          // 24hr transaction count
+    buyTxCount: number,       // Buy transactions
+    sellTxCount: number,      // Sell transactions
+    totalVolumeUsd: number,   // Total volume
+    buyVolumeUsd: number,     // Buy volume
+    sellVolumeUsd: number,    // Sell volume
+    buyMaker: number,         // Number of unique buyers
+    sellMaker: number,        // Number of unique sellers
+    totalMakers: number,      // Total unique traders
+    priceChanged: number      // Price change %
+  },
+
+  // Similar data available for: data5m, data1h, data6h
+}
+```
+
+**Security & Risk Metrics:**
+```typescript
+{
+  securities: {
+    mintAbility: boolean,            // Can mint new tokens (false = safer)
+    freezeAbility: boolean,          // Can freeze tokens (false = safer)
+    lpLockPercentage: number,        // % of LP locked (100 = safest)
+    contractVerified: number,        // Contract verification score
+    buyTax: number,                  // Buy tax %
+    sellTax: number,                 // Sell tax %
+    holderCount: number,             // Number of token holders
+    topHoldersPercentage: number,    // % held by top 10 holders
+    isValidTop10HoldersPercent: boolean  // Whale risk flag
+  },
+
+  // Pump.fun specific
+  bondingCurveProgress: number,      // % toward DEX graduation (0-100)
+  isListedOnDex: boolean,            // DEX graduation status
+  isPumpfun: boolean,                // On pump.fun platform
+
+  // Social sentiment
+  socialInfo: {
+    logoUrl: string,
+    twitterUrl: string,
+    websiteUrl: string,
+    telegramUrl: string
+  }
+}
+```
+
+**Use Cases:**
+- **Momentum Trading:** Sort by `priceChanges.h1` + `volumes.h1` to find volatile tokens
+- **Liquidity Filtering:** `liquidityUsd > 10000` to avoid low-liquidity traps
+- **Security Scoring:** Combine `mintAbility`, `freezeAbility`, `lpLockPercentage`, `topHoldersPercentage`
+- **Graduation Tracking:** Monitor `bondingCurveProgress` approaching 100% for pump.fun tokens
+- **Whale Detection:** Flag tokens where `topHoldersPercentage > 50%`
+
+### HyperLiquid Analytics Data
+
+**Position & PnL Tracking:**
+```typescript
+const stats = await sdk.hyperLiquid.getHyperliquidUserStats(walletAddress);
+// Returns comprehensive trading metrics:
+{
+  userStats: {
+    // PnL over time
+    "24h": number,           // 24hr PnL in USDC
+    "7d": number,            // 7-day PnL
+    "30d": number,           // 30-day PnL
+    allTime: {
+      pnl: number,           // All-time PnL
+      pnlPercentage: number, // All-time ROI %
+      capitalDeployed: number // Capital used
+    },
+
+    // Daily PnL breakdown
+    dailyPnls: Array<{
+      timeMs: number,          // Timestamp
+      date: string,            // ISO date
+      pnl: number,             // Daily PnL
+      pnlPercentage: number,   // Daily ROI %
+      capitalDeployed: number  // Capital used that day
+    }>,
+
+    // Volume tracking
+    volumes: {
+      "24h": number,
+      "7d": number,
+      "30d": number
+    },
+
+    // Win/loss ratios
+    tradesCount: {
+      "24h": { win: number, lose: number, total: number },
+      "7d": { win: number, lose: number, total: number },
+      "30d": { win: number, lose: number, total: number }
+    },
+
+    // Performance metrics
+    percentagePnl: {
+      "24h": number,    // ROI % last 24hrs
+      "7d": number,     // ROI % last 7 days
+      "30d": number     // ROI % last 30 days
+    },
+
+    capitalDeployed: {
+      "24h": number,    // Capital used last 24hrs
+      "7d": number,     // Capital used last 7 days
+      "30d": number     // Capital used last 30 days
+    }
+  }
+}
+```
+
+**Trade History & Fills:**
+```typescript
+const history = await sdk.hyperLiquid.getHyperliquidTradeHistory(
+  walletAddress, sessionKey, false, 1, 100  // getFromApi, page, limit
+);
+// Returns:
+{
+  fills: Array<{
+    coin: string,        // Trading pair (BTC, ETH, etc.)
+    side: string,        // "B" (buy) or "A" (sell)
+    px: string,          // Execution price
+    sz: string,          // Position size
+    time: number,        // Timestamp (ms)
+    closedPnl: string,   // Realized PnL from this fill
+    dir: string,         // Direction
+    hash: string,        // Transaction hash
+    oid: number,         // Order ID
+
+    // Copy trading metadata (if from copy trade)
+    copyTradeName: string,
+    traderWallet: string,
+    traderPrice: string,
+    traderSize: string,
+    traderTxHash: string
+  }>,
+
+  pagination: {
+    currentPage: number,
+    totalPages: number,
+    totalRecords: number,
+    hasNextPage: boolean,
+    hasPreviousPage: boolean
+  }
+}
+```
+
+**Leaderboard Data:**
+```typescript
+const leaders = await sdk.hyperLiquid.getHyperliquidLeaderboard(
+  'allTime',  // 'day' | 'week' | 'month' | 'allTime'
+  100,        // top N traders
+  'desc',     // sort order
+  'pnl'       // sort by 'pnl' | 'accountValue' | 'volume' | 'roi'
+);
+// Returns:
+Array<{
+  ethAddress: string,
+  accountValue: string,
+  displayName: string,
+  windowPerformances: [
+    ['day', { pnl: string, roi: string, vlm: string }],
+    ['week', { pnl: string, roi: string, vlm: string }],
+    ['month', { pnl: string, roi: string, vlm: string }],
+    ['allTime', { pnl: string, roi: string, vlm: string }]
+  ]
+}>
+```
+
+**Use Cases:**
+- **Performance Dashboards:** Plot `dailyPnls` over time for equity curves
+- **Win Rate Analysis:** Calculate win rate from `tradesCount.7d.win / tradesCount.7d.total`
+- **Trader Ranking:** Sort leaderboard by `roi` to find consistent performers
+- **Risk Management:** Monitor `capitalDeployed` vs `pnl` for drawdown tracking
+- **Copy Trading Selection:** Filter leaderboard by `windowPerformances.month.roi > 20%` + `volume > 1M`
+
+### User Portfolio Data
+
+**Holdings with PnL Tracking:**
+```typescript
+const holdings = await sdk.user.getHoldingsList(address, chainId, sessionKey);
+// Returns:
+Array<{
+  amount: string,          // Token amount (smallest unit)
+  uiAmount: string,        // Human-readable amount
+  holding: number,         // Current USD value
+  invested: number,        // Initial investment USD
+  pnlPercentage: number,   // PnL % (eg. 405.41 = +405%)
+  startTimestamp: number,  // Purchase timestamp
+  canSell: boolean,        // Whether sellable now
+
+  tokenInfo: {
+    address: string,
+    symbol: string,
+    name: string,
+    priceUsd: number,
+    marketCap: number,
+    // ... (full token data)
+  }
+}>
+```
+
+**Referral Tracking:**
+```typescript
+const refStats = await sdk.user.getReferralStats(address, chainId);
+// Returns:
+{
+  totalReferralCountTier1: number,  // Direct referrals
+  totalReferralCountTier2: number,  // Indirect referrals
+  pendingAmount: string,            // Unclaimed rewards
+  withdrawable: string,             // Claimable rewards
+  totalWithdrawn: string,           // Already claimed
+  nativePrice: number,              // Current native token price
+  claimHistorys: Array<{
+    claimAmount: string,
+    claimTime: number,
+    status: boolean
+  }>
+}
+```
+
+**Use Cases:**
+- **Portfolio Monitoring:** Calculate total portfolio value: `sum(holdings.map(h => h.holding))`
+- **ROI Tracking:** Plot `pnlPercentage` per holding over time
+- **Rebalancing Alerts:** Flag holdings where `pnlPercentage > 500%` for profit-taking
+- **Referral Performance:** Track referral growth rate vs rewards earned
+
+### Real-Time WebSocket Streams
+
+**Live Token Feed:**
+```typescript
+sdk.connectWebSocketWithChain(622112261);
+const ws = sdk.getWebSocketClient();
+
+ws.on('message', (data) => {
+  // New token launches
+  if (data.newTokensData) {
+    // Real-time array of newly created tokens
+    // Same structure as getNewestTokens()
+  }
+
+  // Token price/volume updates
+  if (data.effectedTokensData) {
+    // Real-time updates for existing tokens
+    // Includes: address, priceUsd, volumes, txCount
+  }
+});
+```
+
+**Use Cases:**
+- **Sniping Bots:** Instant notification when new tokens launch
+- **Price Alerts:** Trigger on `priceChanges.m5 > 50%`
+- **Volume Spikes:** Alert when `volumes.m5 > 10 * volumes.h1`
+- **Live Dashboards:** Stream price updates to UI in real-time
+
+### Analysis Script Examples
+
+**Momentum Scanner:**
+```typescript
+const tokens = await sdk.tokens.getNewestTokens(622112261, 1, undefined, 100);
+
+// Find tokens with high momentum
+const momentum = tokens
+  .filter(t => t.liquidityUsd > 5000 && t.txCount > 10)
+  .map(t => ({
+    symbol: t.symbol,
+    priceChange: t.priceChanges?.h1 || 0,
+    volume: t.volumes?.h1 || 0,
+    buyRatio: t.data1h ? t.data1h.buyTxCount / t.data1h.txCount : 0,
+    score: (t.priceChanges?.h1 || 0) * (t.volumes?.h1 || 0) / 1000
+  }))
+  .sort((a, b) => b.score - a.score)
+  .slice(0, 10);
+
+console.log('Top 10 momentum tokens:', momentum);
+```
+
+**Security Risk Scoring:**
+```typescript
+function calculateRiskScore(token) {
+  let score = 100; // Start at 100 (safest)
+
+  if (token.securities.mintAbility) score -= 30;
+  if (token.securities.freezeAbility) score -= 30;
+  if (token.securities.lpLockPercentage < 50) score -= 20;
+  if (token.securities.topHoldersPercentage > 50) score -= 15;
+  if (token.securities.buyTax > 5) score -= 5;
+  if (token.securities.sellTax > 5) score -= 5;
+
+  return Math.max(0, score);
+}
+
+const safeTokens = tokens
+  .map(t => ({ ...t, riskScore: calculateRiskScore(t) }))
+  .filter(t => t.riskScore > 70)
+  .sort((a, b) => b.riskScore - a.riskScore);
+```
+
+**Trader Performance Analyzer:**
+```typescript
+const stats = await sdk.hyperLiquid.getHyperliquidUserStats(wallet);
+const metrics = {
+  sharpeRatio: calculateSharpe(stats.userStats.dailyPnls),
+  maxDrawdown: calculateMaxDrawdown(stats.userStats.dailyPnls),
+  winRate: stats.userStats.tradesCount['30d'].win / stats.userStats.tradesCount['30d'].total,
+  avgWin: stats.userStats['30d'] / stats.userStats.tradesCount['30d'].win,
+  profitFactor: Math.abs(stats.userStats.tradesCount['30d'].win / stats.userStats.tradesCount['30d'].lose),
+  roi: stats.userStats.percentagePnl['30d']
+};
+```
+
+### Data Export & Persistence
+
+All SDK methods return plain JavaScript objects — easily serializable for:
+- **CSV Export:** For Excel analysis
+- **Database Storage:** PostgreSQL, MongoDB, TimescaleDB for time-series
+- **Analytics Platforms:** Feed to Grafana, Metabase, Tableau
+- **ML Training:** Export historical data for model training
+
+### Quick Command
+```bash
+npm run explore:data  # Comprehensive data exploration demo
+```
+
 ## Security Notes
 
 - **Never log or expose private keys**

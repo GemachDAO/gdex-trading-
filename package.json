@@ -18,7 +18,20 @@
     "deposit": "ts-node src/deposit-hyperliquid.ts",
     "deposit:correct": "ts-node src/deposit-correct-flow.ts",
     "solana:swap": "ts-node src/solana-meme-swap.ts",
-    "solana:scan": "ts-node src/solana-scanner.ts"
+    "solana:scan": "ts-node src/solana-scanner.ts",
+    "hl:trade": "ts-node src/hyperliquid-trade.ts",
+    "test:new-sdk": "ts-node src/test-new-sdk.ts",
+    "hl:copytrade": "ts-node src/copytrade-test.ts",
+    "hl:copytrade-self": "ts-node src/copytrade-self.ts",
+    "base:trade": "ts-node src/base-trading.ts",
+    "base:balance": "ts-node src/check-base-balance.ts",
+    "solana:limit-orders": "ts-node src/solana-limit-orders.ts",
+    "test:hlplaceorder": "ts-node src/test-hlplaceorder.ts",
+    "check:wallet": "ts-node src/check-wallet.ts",
+    "explain:wallets": "ts-node src/explain-wallet-system.ts",
+    "hl:setup": "ts-node src/hyperliquid-deposit-and-trade.ts",
+    "hl:fund-and-trade": "ts-node src/fund-and-trade-hl.ts",
+    "explore:data": "ts-node src/explore-sdk-data.ts"
   },
   "keywords": [
     "gdex",
