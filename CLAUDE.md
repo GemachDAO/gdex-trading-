@@ -148,27 +148,79 @@ const sell = await sellToken(session, {
 
 **Quick command:** `npm run solana:swap`
 
-## 🚨 HyperLiquid Perpetual Futures Status
+## 🎉 HyperLiquid Perpetual Futures - MAJOR BREAKTHROUGH (Feb 12, 2026)
+
+### ✅ DEPOSIT TO HYPERLIQUID - WORKING!
+
+**Endpoint**: `POST /v1/hl/deposit`
+**Status**: ✅ **VERIFIED WORKING** - Successfully deposited $10 USDC
+**Script**: `src/deposit-hl-correct.ts`
+
+```typescript
+// Working deposit implementation
+const encodedData = CryptoUtils.encodeInputData("hl_deposit", {
+  chainId: 42161,  // Arbitrum only
+  tokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",  // USDC
+  amount: "10000000",  // 10 USDC (6 decimals)
+  nonce: generateNonce().toString()
+});
+
+const userId = session.walletAddress.toLowerCase();
+const signature = CryptoUtils.sign(`hl_deposit-${userId}-${encodedData}`, session.tradingPrivateKey);
+
+const payload = { userId, data: encodedData, signature, apiKey };
+const computedData = encrypt(JSON.stringify(payload), apiKey);
+
+await axios.post(`${apiUrl}/hl/deposit`, { computedData }, {
+  headers: {
+    'Origin': 'https://gdex.pro',  // CRITICAL for CORS
+    'Referer': 'https://gdex.pro/',
+  }
+});
+```
+
+**Key Requirements**:
+- ✅ CORS headers: `Origin: https://gdex.pro` (required!)
+- ✅ Encoding: `CryptoUtils.encodeInputData("hl_deposit", ...)`
+- ✅ Signing: `hl_deposit-${userId}-${encodedData}`
+- ✅ Full payload encryption with API key
+
+### ⚠️ LEVERAGED POSITION OPENING - IN PROGRESS
+
+**Endpoint**: `POST /v1/hl/create_order`
+**Status**: Website works, our code gets "Sent order failed"
+
+**What We Know**:
+- ✅ Endpoint: `/v1/hl/create_order`
+- ✅ CORS headers working (same as deposit)
+- ✅ Encoding: `CryptoUtils.encodeInputData("hl_create_order", params)`
+- ✅ Balance: $10 on custodial HyperLiquid account
+- ✅ **Website successfully places orders** (confirmed Feb 12, 2026)
+- ❌ Code gets "Sent order failed" from HyperLiquid
+- 🔍 **Next**: Compare website payload with code payload
+
+**Scripts**:
+- `src/test-hl-new-sdk-approach.ts` - Order placement (needs payload comparison)
+- `src/deposit-hl-correct.ts` - Deposit (WORKING!)
+- `src/check-hl-balances.ts` - Check balances
 
 ### ✅ What WORKS:
-- **Spot trading on ALL EVM chains** - Base, Arbitrum, Ethereum, BSC, etc. ✅
-- **Solana meme coin trading** - Including pump.fun tokens ✅
-- **Closing HyperLiquid positions**: `hlPlaceOrder` with `reduceOnly=true` ✅
-- **Balance queries**: `getHyperliquidUsdcBalance()`, `getHyperliquidClearinghouseState()` ✅
-- **Copy trading**: `hlCreate()` (opens positions indirectly) ✅
-- **Close all positions**: `hlCloseAll()` ✅
-- **Withdrawals**: `hlWithdraw()` ✅
+- ✅ **Depositing to HyperLiquid** via `/v1/hl/deposit` endpoint
+- ✅ **Spot trading on ALL EVM chains** - Base, Arbitrum, Ethereum, BSC, etc.
+- ✅ **Solana meme coin trading** - Including pump.fun tokens
+- ✅ **Closing HyperLiquid positions**: `hlPlaceOrder` with `reduceOnly=true`
+- ✅ **Balance queries**: `getHyperliquidUsdcBalance()`, `getHyperliquidClearinghouseState()`
+- ✅ **Copy trading**: `hlCreate()` (opens positions indirectly)
+- ✅ **Close all positions**: `hlCloseAll()`
+- ✅ **Withdrawals**: `hlWithdraw()`
 
-### ❌ What DOESN'T Work (HyperLiquid Futures ONLY):
-- **Opening leveraged positions via API** ← ONLY THING BROKEN
-  - `hlPlaceOrder` with `reduceOnly=false` → error 102: "Now only support close position"
-  - `hlCreateOrder` (any params) → "Sent order failed"
-- `hlDeposit()` → "Unauthorized" (use custodial deposits instead)
+### 🔧 What's IN PROGRESS:
+- 🔧 **Opening leveraged positions** via `/v1/hl/create_order` (website confirmed working)
 
-**Important:** ONLY HyperLiquid leveraged futures opening is broken. All other trading (spot on Base/Arbitrum/etc, Solana memes, limit orders) works perfectly!
-
-### 🔄 Workaround for HyperLiquid Futures:
-Use copy trading to open positions indirectly via `hlCreate()` - this works!
+### ❌ What DOESN'T Work (Legacy SDK Methods):
+- ❌ `hlPlaceOrder` with `reduceOnly=false` → error 102
+- ❌ `hlCreateOrder` (SDK method) → "Sent order failed"
+- ❌ `hlDeposit()` (SDK method) → "Unauthorized"
 
 ## Reference Docs
 

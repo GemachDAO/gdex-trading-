@@ -75,19 +75,46 @@ npm run solana:swap  # Buy & sell pump.fun tokens
 npm run solana:scan  # Real-time scanner with inline trading
 ```
 
-## ⚠️ HyperLiquid Perpetual Futures
+## 🎉 HyperLiquid Perpetual Futures - MAJOR BREAKTHROUGH (Feb 12, 2026)
 
-**Only leveraged futures OPENING is broken.** Spot trading on Arbitrum works perfectly!
+### ✅ DEPOSIT TO HYPERLIQUID - WORKING!
 
-✅ **What Works:**
-- Closing positions
-- Balance queries
-- Copy trading (opens positions indirectly)
-- Withdrawals
+**Status**: ✅ **VERIFIED WORKING** - Successfully deposited $10 USDC to HyperLiquid
 
-❌ **What's Broken:**
-- Opening leveraged positions via `hlPlaceOrder` or `hlCreateOrder`
-- Use copy trading as workaround!
+```bash
+npm run deposit:hl 10  # Deposit 10 USDC to HyperLiquid
+```
+
+**Script**: `src/deposit-hl-correct.ts`
+
+**Key Requirements**:
+- Endpoint: `POST /v1/hl/deposit`
+- CORS headers: `Origin: https://gdex.pro` (required!)
+- Uses custodial wallet address for HyperLiquid trading
+- Auto-processes in ~1-5 minutes
+
+### ⚠️ LEVERAGED POSITION OPENING - IN PROGRESS
+
+**Website successfully places orders** (confirmed), but our code gets "Sent order failed" from HyperLiquid.
+
+**Current Progress**:
+- ✅ Endpoint found: `/v1/hl/create_order`
+- ✅ CORS headers working
+- ✅ Balance available: $10 on custodial HyperLiquid account
+- ✅ Website works
+- ❌ Code needs payload comparison to match website
+
+**Next Step**: Compare website request payload with code payload
+
+### ✅ What Works:
+- ✅ **Depositing to HyperLiquid** (BREAKTHROUGH!)
+- ✅ Closing positions
+- ✅ Balance queries
+- ✅ Copy trading (opens positions indirectly)
+- ✅ Withdrawals
+
+### 🔧 In Progress:
+- 🔧 Opening leveraged positions (website confirmed working)
 
 ## 📚 Documentation
 

@@ -473,31 +473,117 @@ npm run base:trade      # Test Base trading
 npm run base:balance    # Check Base balances
 ```
 
-### 6. HyperLiquid Perpetual Futures - ⚠️ OPENING POSITIONS BROKEN
+### 6. HyperLiquid Perpetual Futures - 🔧 MAJOR BREAKTHROUGH (Feb 12, 2026)
 
-**IMPORTANT:** Only HyperLiquid leveraged futures OPENING is broken. All spot trading (Base, Arbitrum, etc.) works perfectly!
+**MAJOR PROGRESS:** We've discovered the correct endpoints and deposit flow! Website successfully places orders.
 
-#### Current API Status (as of Feb 2025)
+#### ✅ DEPOSIT TO HYPERLIQUID - WORKING!
+
+**Endpoint**: `POST /v1/hl/deposit`
+
+**Working Implementation**:
+```typescript
+// 1. Encode deposit data (use SDK's encodeInputData)
+const encodedData = CryptoUtils.encodeInputData("hl_deposit", {
+  chainId: 42161,  // Arbitrum only
+  tokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",  // USDC
+  amount: "10000000",  // 10 USDC (6 decimals)
+  nonce: generateNonce().toString()
+});
+
+// 2. Sign with pattern: hl_deposit-{userId}-{encodedData}
+const userId = session.walletAddress.toLowerCase();
+const signature = CryptoUtils.sign(`hl_deposit-${userId}-${encodedData}`, session.tradingPrivateKey);
+
+// 3. Create and encrypt payload
+const payload = { userId, data: encodedData, signature, apiKey };
+const computedData = encrypt(JSON.stringify(payload), apiKey);
+
+// 4. POST with CORS headers (CRITICAL!)
+await axios.post(`${apiUrl}/hl/deposit`, { computedData }, {
+  headers: {
+    'Origin': 'https://gdex.pro',  // Required for CORS
+    'Referer': 'https://gdex.pro/',
+  }
+});
+```
+
+**Status**: ✅ **VERIFIED WORKING** - Successfully deposited $10 USDC to HyperLiquid custodial account
+
+**Script**: `src/deposit-hl-correct.ts`
+**Command**: `npm run deposit:hl 10`
+
+#### ⚠️ LEVERAGED POSITION OPENING - IN PROGRESS
+
+**Endpoint**: `POST /v1/hl/create_order`
+
+**Current Status**:
+- ✅ Endpoint discovered: `/v1/hl/create_order`
+- ✅ CORS headers working: Need `Origin: https://gdex.pro`
+- ✅ Encoding working: `CryptoUtils.encodeInputData("hl_create_order", params)`
+- ✅ Balance available: $10 on custodial HyperLiquid account
+- ✅ **Website successfully places orders** (confirmed Feb 12, 2026)
+- ❌ Our code gets "Sent order failed" from HyperLiquid
+- 🔍 **NEXT STEP**: Compare website request payload with code payload
+
+**Known Working on Website**: User confirmed successful "Place order successful" message
+
+**Implementation (needs payload comparison)**:
+```typescript
+const encodedData = CryptoUtils.encodeInputData("hl_create_order", {
+  coin: "BTC",
+  isLong: true,
+  price: price.toString(),
+  size: positionSize,
+  reduceOnly: false,
+  nonce: nonce.toString(),
+  tpPrice: "0",
+  slPrice: "0",
+  isMarket: true
+});
+
+const userId = session.walletAddress.toLowerCase();
+const signature = CryptoUtils.sign(`hl_create_order-${userId}-${encodedData}`, session.tradingPrivateKey);
+
+const payload = { userId, data: encodedData, signature, apiKey };
+const computedData = encrypt(JSON.stringify(payload), apiKey);
+
+await axios.post(`${apiUrl}/hl/create_order`, { computedData }, {
+  headers: {
+    'Origin': 'https://gdex.pro',
+    'Referer': 'https://gdex.pro/',
+  }
+});
+```
+
+**Scripts**:
+- `src/test-hl-new-sdk-approach.ts` - Order placement (needs debugging)
+- `src/check-hl-balances.ts` - Check control & custodial HL balances
+
+#### Legacy Methods Status
 
 | Method | Open Position | Close Position | Status |
 |--------|:---:|:---:|--------|
 | `hlPlaceOrder` | Error 102 | **WORKS** | Close only |
-| `hlCreateOrder` | "Sent order failed" | "Sent order failed" | Broken |
-| New `@gdex/sdk` | DNS not live | DNS not live | `api.gdex.io` pending |
-
-**Opening positions via API is NOT currently supported.** The GDEX backend returns error 102: "Now only support close position" for `hlPlaceOrder`, and `hlCreateOrder` always returns "Sent order failed" regardless of parameters.
+| `hlCreateOrder` | "Sent order failed" | "Sent order failed" | Use new endpoint |
+| `/v1/hl/deposit` | N/A | N/A | ✅ **WORKING!** |
+| `/v1/hl/create_order` | In progress | Unknown | Website works |
 
 **What WORKS now:**
-- Closing positions: `hlPlaceOrder` with `reduceOnly=true`
-- Balance/position queries
-- Copy trading (opening positions indirectly)
-- Withdrawals
-- Close all positions
+- ✅ **Depositing to HyperLiquid** via `/v1/hl/deposit`
+- ✅ Closing positions: `hlPlaceOrder` with `reduceOnly=true`
+- ✅ Balance/position queries
+- ✅ Copy trading (opening positions indirectly)
+- ✅ Withdrawals
+- ✅ Close all positions
 
-**What DOESN'T work:**
-- `hlPlaceOrder` with `reduceOnly=false` → error 102
-- `hlCreateOrder` (any params) → "Sent order failed"
-- `hlDeposit()` → "Unauthorized" (use custodial flow)
+**What's IN PROGRESS:**
+- 🔧 Opening positions via `/v1/hl/create_order` (website works, code needs payload comparison)
+
+**What DOESN'T work (legacy SDK methods):**
+- ❌ `hlPlaceOrder` with `reduceOnly=false` → error 102
+- ❌ `hlCreateOrder` (SDK method) → "Sent order failed"
+- ❌ `hlDeposit()` (SDK method) → "Unauthorized"
 
 #### Closing Positions (WORKS)
 
