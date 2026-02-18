@@ -49,7 +49,7 @@ export {
 } from './market';
 
 // Config & wallet utilities
-export { loadConfig, validateConfig, CHAIN_NAMES, type Config } from './config';
+export { loadConfig, validateConfig, CHAIN_NAMES, REQUIRED_HEADERS, type Config } from './config';
 export {
   generateWallet,
   generateEVMWallet,

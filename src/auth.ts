@@ -4,7 +4,7 @@ import WebSocket from 'ws';
 
 import { createSDK, CryptoUtils } from 'gdex.pro-sdk';
 import { ethers } from 'ethers';
-import { loadConfig, Config } from './config';
+import { loadConfig, Config, REQUIRED_HEADERS } from './config';
 import { generateEVMWallet, saveWalletToEnv } from './wallet';
 
 // ---------------------------------------------------------------------------
@@ -57,12 +57,35 @@ export function getEffectiveApiKey(apiKey: string): string {
 }
 
 /**
+ * Inject required browser-like Origin/Referer headers into the SDK's
+ * internal axios instance.  Without these the GDEX API returns 403
+ * "Access denied: Non-browser clients not allowed".
+ */
+function patchSDKHeaders(sdk: ReturnType<typeof createSDK>): void {
+  try {
+    const httpClient = (sdk as any).httpClient;
+    if (httpClient?.getClient) {
+      const axios = httpClient.getClient();
+      Object.assign(axios.defaults.headers.common, REQUIRED_HEADERS);
+    } else if (httpClient?.client?.defaults) {
+      Object.assign(httpClient.client.defaults.headers.common, REQUIRED_HEADERS);
+    }
+  } catch {
+    // SDK internals changed — headers won't be set, calls may 403
+    console.warn('[gdex] Warning: Could not patch SDK headers. API calls may fail with 403.');
+  }
+}
+
+/**
  * Create and return an initialized SDK instance.
- * Handles comma-separated API key extraction automatically.
+ * Handles comma-separated API key extraction and injects required
+ * Origin/Referer headers automatically.
  */
 export function initSDK(apiUrl: string, apiKey?: string): ReturnType<typeof createSDK> {
   const effectiveKey = apiKey ? getEffectiveApiKey(apiKey) : undefined;
-  return createSDK(apiUrl, { apiKey: effectiveKey });
+  const sdk = createSDK(apiUrl, { apiKey: effectiveKey });
+  patchSDKHeaders(sdk);
+  return sdk;
 }
 
 // ---------------------------------------------------------------------------

@@ -40,13 +40,15 @@ npm run explain:wallets     # Explain two-wallet custodial system
 
 This is a TypeScript trading bot built on the `gdex.pro-sdk` package for the GDEX decentralized exchange. It provides clean importable modules for authentication, trading, and market data, plus a comprehensive test suite.
 
+**API Headers (Critical):** All requests to `trade-api.gemach.io` require a browser-like `User-Agent` header (primary gatekeeper — without it, 403 "Non-browser clients not allowed") plus `Origin: https://gdex.pro` and `Referer: https://gdex.pro/` for CORS. The `initSDK()` and `createAuthenticatedSession()` functions auto-inject these. For direct `axios`/`fetch` calls, import `REQUIRED_HEADERS` from `src/config.ts`. Do NOT use `/v1/health` for connectivity checks (returns 404); use `sdk.tokens.getNativePrices()` instead.
+
 **Source files:**
 
 - `src/index.ts` — Barrel exports for all public APIs; CLI entry point runs test suite
 - `src/auth.ts` — Authentication & session management: `createAuthenticatedSession()`, `initSDK()`, `getEffectiveApiKey()`, `ensureEVMWallet()`, `GDEXSession` interface
 - `src/trading.ts` — Trading helpers that accept a `GDEXSession`: `buyToken()`, `sellToken()`, `createLimitBuyOrder()`, `createLimitSellOrder()`, `getOrders()`, `formatSolAmount()`, `formatEthAmount()`
 - `src/market.ts` — Market data helpers: `getTrendingTokens()`, `searchTokens()`, `getTokenPrice()`, `getNewestTokens()`, `getNativePrices()`, `getHoldings()`, `getUserInfo()`
-- `src/config.ts` — Loads `.env` via dotenv, exports `Config` interface, `loadConfig()`, `validateConfig()`, and `CHAIN_NAMES` lookup map
+- `src/config.ts` — Loads `.env` via dotenv, exports `Config` interface, `loadConfig()`, `validateConfig()`, `CHAIN_NAMES` lookup map, and `REQUIRED_HEADERS` (Origin/Referer headers needed for all API calls)
 - `src/wallet.ts` — Wallet generation for Solana (bs58/Keypair) and EVM (ethers), `.env` persistence, chain-type detection helpers (`isSolanaChain`, `isEVMChain`)
 - `src/test-suite.ts` — Comprehensive SDK test suite (8 phases): tokens, user, trading, copyTrade, hyperLiquid, WebSocket, trading execution, CryptoUtils
 - **`src/deposit-correct-flow.ts`** — ✅ **Working custodial deposit implementation** (use this for deposits!)

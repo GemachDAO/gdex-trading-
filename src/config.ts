@@ -36,6 +36,19 @@ export function validateConfig(config: Config): string[] {
   return errors;
 }
 
+/**
+ * Required browser-like headers for all GDEX API requests.
+ * The API blocks requests without a browser-like User-Agent (returns 403).
+ * Origin/Referer are additionally required for CORS on /hl/* endpoints.
+ * These are automatically injected by initSDK() / createAuthenticatedSession(),
+ * but agents making direct HTTP calls must include them manually.
+ */
+export const REQUIRED_HEADERS = {
+  'Origin': 'https://gdex.pro',
+  'Referer': 'https://gdex.pro/',
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+} as const;
+
 /** Human-readable chain names */
 export const CHAIN_NAMES: Record<number, string> = {
   1: 'Ethereum',

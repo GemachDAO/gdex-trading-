@@ -25,6 +25,70 @@ Enable programmatic interaction with GDEX (Gemach DAO's decentralized exchange) 
 npm install gdex.pro-sdk ethers ws
 ```
 
+## API Connectivity Requirements (Critical for Agents)
+
+All requests to `trade-api.gemach.io` **must** include a browser-like `User-Agent` header. Without it the API returns **403 "Access denied: Non-browser clients not allowed"**. Additionally, `Origin` and `Referer` headers are required for CORS on HyperLiquid (`/hl/*`) endpoints.
+
+### Required Headers
+
+| Header | Value | Required? |
+|--------|-------|-----------|
+| `User-Agent` | A Chrome/Firefox browser UA string | **YES — all requests (primary gatekeeper)** |
+| `Origin` | `https://gdex.pro` | **YES — all requests (CORS)** |
+| `Referer` | `https://gdex.pro/` | **YES — all requests (CORS)** |
+
+### Automatic Injection (Recommended)
+
+`createAuthenticatedSession()` and `initSDK()` automatically patch these headers into the SDK's internal axios instance. **No extra work needed** when using the provided helpers.
+
+### Manual Injection (Direct HTTP Calls)
+
+If making raw `axios`/`fetch`/`curl` calls outside the SDK, include the headers explicitly:
+
+```typescript
+import { REQUIRED_HEADERS } from 'gdex-trading';
+// REQUIRED_HEADERS includes User-Agent, Origin, and Referer
+
+await axios.post(`${apiUrl}/hl/deposit`, { computedData }, {
+  headers: { ...REQUIRED_HEADERS }
+});
+```
+
+For `curl`:
+```bash
+curl -H "User-Agent: Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36" \
+     -H "Origin: https://gdex.pro" \
+     -H "Referer: https://gdex.pro/" \
+     https://trade-api.gemach.io/v1/...
+```
+
+### Health Check / Connectivity Test
+
+**Do NOT use `/v1/health`** — that endpoint does not exist and returns 404.
+
+Instead, test connectivity with a lightweight unauthenticated call:
+
+```typescript
+import { initSDK } from 'gdex-trading';
+
+// initSDK automatically injects required headers
+const sdk = initSDK('https://trade-api.gemach.io/v1');
+
+try {
+  const prices = await sdk.tokens.getNativePrices();
+  console.log('API reachable:', Object.keys(prices).length > 0);
+} catch (e) {
+  console.error('API unreachable:', e.message);
+}
+```
+
+Or with curl:
+```bash
+curl -H "User-Agent: Mozilla/5.0 Chrome/131.0" \
+     https://trade-api.gemach.io/v1/token/native_prices
+# Returns 200 with price data if reachable
+```
+
 ## 🔑 Critical: Universal Custodial Wallet System
 
 **IMPORTANT FOR AGENTS:** GDEX uses TWO wallet addresses - understanding this is critical!
@@ -508,6 +572,8 @@ await axios.post(`${apiUrl}/hl/deposit`, { computedData }, {
 });
 ```
 
+> **Note:** These headers are required for ALL API requests, not just HyperLiquid endpoints. When using `createAuthenticatedSession()` / `initSDK()`, they are injected automatically. Only add them manually for direct `axios`/`fetch` calls.
+
 **Status**: ✅ **VERIFIED WORKING** - Successfully deposited $10 USDC to HyperLiquid custodial account
 
 **Script**: `src/deposit-hl-correct.ts`
@@ -555,6 +621,8 @@ await axios.post(`${apiUrl}/hl/create_order`, { computedData }, {
   }
 });
 ```
+
+> **Note:** `Origin` and `Referer` headers are required for all GDEX API requests — see "API Connectivity Requirements" above.
 
 **Scripts**:
 - `src/test-hl-new-sdk-approach.ts` - Order placement (needs debugging)
@@ -828,17 +896,21 @@ Amounts must be in smallest unit as strings:
 
 ## Common Gotchas
 
-1. **HyperLiquid deposits use custodial flow** — Do NOT use `sdk.hyperLiquid.hlDeposit()` directly! It will fail with "Unauthorized" errors. Instead, get your deposit address from `getUserInfo()` and send USDC to that address on Arbitrum. GDEX processes it automatically (1-10 minutes). Minimum: 5 USDC. See section 4 above for complete implementation.
+1. **API requires browser-like User-Agent** — All requests to `trade-api.gemach.io` must include a browser-like `User-Agent` header (e.g., `Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36`). Without it, you get 403 "Access denied: Non-browser clients not allowed". Additionally, `Origin: https://gdex.pro` and `Referer: https://gdex.pro/` are needed for CORS. The `gdex.pro-sdk` sets `User-Agent` internally, but CLI tools and direct `curl`/`fetch` calls need them manually. Import `REQUIRED_HEADERS` from `gdex-trading` for all three headers.
 
-2. **EVM wallets for all chains** — The SDK uses secp256k1 signing internally, even for Solana. Always use a `0x`-prefixed EVM wallet address.
+2. **HyperLiquid deposits use custodial flow** — Do NOT use `sdk.hyperLiquid.hlDeposit()` directly! It will fail with "Unauthorized" errors. Instead, get your deposit address from `getUserInfo()` and send USDC to that address on Arbitrum. GDEX processes it automatically (1-10 minutes). Minimum: 5 USDC. See section 4 above for complete implementation.
 
-3. **Session key vs wallet key** — The wallet private key is ONLY for the login signature. Trading uses the session key's private key (`session.tradingPrivateKey`). Passing the wallet key to `sdk.trading.buy()` will fail.
+3. **EVM wallets for all chains** — The SDK uses secp256k1 signing internally, even for Solana. Always use a `0x`-prefixed EVM wallet address.
 
-4. **Comma-separated API keys** — The `.env` file may contain multiple API keys separated by commas. Always split and use the first: `apiKey.split(',')[0].trim()`. The `createAuthenticatedSession()` helper handles this automatically.
+4. **Session key vs wallet key** — The wallet private key is ONLY for the login signature. Trading uses the session key's private key (`session.tradingPrivateKey`). Passing the wallet key to `sdk.trading.buy()` will fail.
 
-5. **WebSocket polyfill** — Node.js doesn't have a native WebSocket. Add `(globalThis as any).WebSocket = WebSocket` (from `ws` package) before any SDK calls. The `createAuthenticatedSession()` and `initSDK()` helpers handle this automatically.
+5. **Comma-separated API keys** — The `.env` file may contain multiple API keys separated by commas. Always split and use the first: `apiKey.split(',')[0].trim()`. The `createAuthenticatedSession()` helper handles this automatically.
 
-6. **Amount units** — All amounts are strings in smallest units (lamports, wei). Use `formatSolAmount()` and `formatEthAmount()` helpers to convert. For USDC: multiply by `1e6` (not `1^6`!) - 5 USDC = `5 * 1e6` = 5,000,000 units.
+6. **WebSocket polyfill** — Node.js doesn't have a native WebSocket. Add `(globalThis as any).WebSocket = WebSocket` (from `ws` package) before any SDK calls. The `createAuthenticatedSession()` and `initSDK()` helpers handle this automatically.
+
+7. **Amount units** — All amounts are strings in smallest units (lamports, wei). Use `formatSolAmount()` and `formatEthAmount()` helpers to convert. For USDC: multiply by `1e6` (not `1^6`!) - 5 USDC = `5 * 1e6` = 5,000,000 units.
+
+8. **No /v1/health endpoint** — Do NOT use `/v1/health` for connectivity checks; it returns 404. Use `sdk.tokens.getNativePrices()` as a lightweight unauthenticated connectivity test instead.
 
 ## Error Handling
 
@@ -1260,6 +1332,52 @@ All SDK methods return plain JavaScript objects — easily serializable for:
 ```bash
 npm run explore:data  # Comprehensive data exploration demo
 ```
+
+## Agent Integration
+
+### Connectivity Detection
+
+Agents should verify API reachability before attempting trades. **Do NOT call `/v1/health`** (it doesn't exist). Use this pattern:
+
+```typescript
+import { initSDK } from 'gdex-trading';
+
+const sdk = initSDK('https://trade-api.gemach.io/v1', process.env.GDEX_API_KEY);
+
+// Lightweight unauthenticated check — returns native token prices
+const prices = await sdk.tokens.getNativePrices();
+const isOnline = prices && Object.keys(prices).length > 0;
+// If isOnline is true, the full API pipeline is functional
+```
+
+### Required Header Injection
+
+The `initSDK()` and `createAuthenticatedSession()` functions automatically inject the required `Origin`, `Referer`, and `User-Agent` headers into the SDK's internal HTTP client. No additional configuration is needed.
+
+For agents that bypass the SDK and make direct HTTP calls:
+
+```typescript
+import { REQUIRED_HEADERS } from 'gdex-trading';
+
+// REQUIRED_HEADERS = {
+//   'Origin': 'https://gdex.pro',
+//   'Referer': 'https://gdex.pro/',
+//   'User-Agent': 'Mozilla/5.0 ... Chrome/131.0.0.0 Safari/537.36'
+// }
+const response = await fetch('https://trade-api.gemach.io/v1/token/native_prices', {
+  headers: { ...REQUIRED_HEADERS }
+});
+```
+
+### Offline Fallback
+
+If the API is unreachable (network issues, not header misconfiguration), agents can still:
+- Read cached wallet info from `.env`
+- Generate QR codes for wallet addresses
+- Display static skill documentation
+- Show deterministic wallet reports
+
+But **cannot** execute trades, fetch live prices, or authenticate sessions.
 
 ## Security Notes
 
