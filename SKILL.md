@@ -64,30 +64,44 @@ curl -H "User-Agent: Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36" \
 
 ### Health Check / Connectivity Test
 
-**Do NOT use `/v1/health`** — that endpoint does not exist and returns 404.
+**Do NOT use `/v1/health` or `/`** — those endpoints do not exist and return 404.
 
-Instead, test connectivity with a lightweight unauthenticated call:
+The correct health check endpoint is **`/v1/native_prices`** — lightweight, unauthenticated, and confirms the full API pipeline works.
 
+**With curl/fetch (for agents and CLI tools):**
+```bash
+curl -s -H "User-Agent: Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36" \
+     https://trade-api.gemach.io/v1/native_prices
+# Returns 200 with JSON: {"nativePrices":[{"chainId":1,"nativePrice":2019.9},...]} 
+# If 403: missing User-Agent header
+# If no response: service is down
+```
+
+**With Node.js SDK:**
 ```typescript
 import { initSDK } from 'gdex-trading';
 
-// initSDK automatically injects required headers
 const sdk = initSDK('https://trade-api.gemach.io/v1');
-
 try {
   const prices = await sdk.tokens.getNativePrices();
-  console.log('API reachable:', Object.keys(prices).length > 0);
+  console.log('API reachable:', prices.length, 'chains');
 } catch (e) {
   console.error('API unreachable:', e.message);
 }
 ```
 
-Or with curl:
-```bash
-curl -H "User-Agent: Mozilla/5.0 Chrome/131.0" \
-     https://trade-api.gemach.io/v1/token/native_prices
-# Returns 200 with price data if reachable
-```
+### Actual API URL Paths (for curl/fetch)
+
+The SDK uses these **real** URL paths internally. Use these exact paths for direct HTTP calls:
+
+| SDK Method | HTTP | Actual URL Path |
+|-----------|------|----------------|
+| `tokens.getNativePrices()` | GET | `/v1/native_prices` |
+| `tokens.getTrendingTokens(limit)` | GET | `/v1/trending/list?limit=N` |
+| `tokens.getNewestTokens(chainId,page,_,limit)` | GET | `/v1/newest?chainId=X&page=N&limit=N` |
+| `tokens.searchTokens(query, limit)` | GET | `/v1/token_details?search=Q&limit=N` |
+
+**All paths require `User-Agent: Mozilla/5.0 ...` header.** Without it → 403.
 
 ## 🔑 Critical: Universal Custodial Wallet System
 
