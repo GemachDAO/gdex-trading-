@@ -9,7 +9,7 @@ TypeScript trading bot for [GDEX](https://gdex.pro) decentralized exchange with 
 ✅ **Solana Meme Coins** - Including pump.fun pre-DEX tokens
 ✅ **Multi-Chain** - Arbitrum, Ethereum, BSC, Optimism, and more
 ✅ **Real-Time Data** - WebSocket streams + comprehensive analytics
-⚠️ **HyperLiquid Futures** - Opening positions broken (closing works, use copy trading)
+✅ **HyperLiquid Futures** - Opening positions WORKING! (Feb 26, 2026 breakthrough)
 
 ## 🚀 Quick Start
 
@@ -79,7 +79,7 @@ npm run solana:swap  # Buy & sell pump.fun tokens
 npm run solana:scan  # Real-time scanner with inline trading
 ```
 
-## 🎉 HyperLiquid Perpetual Futures - MAJOR BREAKTHROUGH (Feb 12, 2026)
+## 🎉 HyperLiquid Perpetual Futures - FULLY WORKING (Feb 26, 2026)
 
 ### ✅ DEPOSIT TO HYPERLIQUID - WORKING!
 
@@ -89,36 +89,31 @@ npm run solana:scan  # Real-time scanner with inline trading
 npm run deposit:hl 10  # Deposit 10 USDC to HyperLiquid
 ```
 
-**Script**: `src/deposit-hl-correct.ts`
+### ✅ OPENING POSITIONS - WORKING! (NEW)
+
+**Status**: ✅ **VERIFIED** - Real limit orders placed on HyperLiquid via GDEX API
+
+**Script**: `src/test-create-order.ts`
+
+```bash
+npx ts-node src/test-create-order.ts  # Place & cancel ETH limit order
+```
 
 **Key Requirements**:
-- Endpoint: `POST /v1/hl/deposit`
-- CORS headers: `Origin: https://gdex.pro` (required!)
-- Uses custodial wallet address for HyperLiquid trading
-- Auto-processes in ~1-5 minutes
-
-### ⚠️ LEVERAGED POSITION OPENING - IN PROGRESS
-
-**Website successfully places orders** (confirmed), but our code gets "Sent order failed" from HyperLiquid.
-
-**Current Progress**:
-- ✅ Endpoint found: `/v1/hl/create_order`
-- ✅ CORS headers working
-- ✅ Balance available: $10 on custodial HyperLiquid account
-- ✅ Website works
-- ❌ Code needs payload comparison to match website
-
-**Next Step**: Compare website request payload with code payload
+- Endpoint: `POST /v1/hl/create_order`
+- Browser User-Agent required on all requests (axios UA gets 403)
+- CORS headers: `Origin: https://gdex.pro`, `Referer: https://gdex.pro/`
+- Min order value: price × size ≥ $11
+- Numeric-style nonce: `Date.now() + Math.random() * 1000`
 
 ### ✅ What Works:
-- ✅ **Depositing to HyperLiquid** (BREAKTHROUGH!)
+- ✅ **Depositing to HyperLiquid** via `/v1/hl/deposit`
+- ✅ **Opening leveraged positions** via `/v1/hl/create_order` ← NEW!
+- ✅ **Cancelling orders** via `/v1/hl/cancel_order`
 - ✅ Closing positions
 - ✅ Balance queries
 - ✅ Copy trading (opens positions indirectly)
 - ✅ Withdrawals
-
-### 🔧 In Progress:
-- 🔧 Opening leveraged positions (website confirmed working)
 
 ## 📚 Documentation
 
@@ -207,15 +202,14 @@ const session = await createAuthenticatedSession({
 ### Trading
 
 ```typescript
-import { buyToken, sellToken } from './trading';
+import { buyToken, sellToken, formatSolAmount } from './trading';
 
 // Buy with 0.005 SOL
-const result = await buyToken(
-  session,
-  '5000000',      // lamports
+const result = await buyToken(session, {
   tokenAddress,
-  622112261
-);
+  amount: formatSolAmount(0.005), // '5000000' lamports
+  chainId: 622112261,
+});
 ```
 
 ### Market Data
@@ -239,16 +233,19 @@ npm run deposit:correct 10
 ```
 
 ```typescript
-// After deposit, trade perpetuals
-await sdk.hyperLiquid.hlPlaceOrder(
-  address,
-  'BTC',     // coin
-  true,      // isLong
-  '50000',   // price
-  '0.1',     // size
-  false,     // reduceOnly
-  privateKey
-);
+// After deposit, open a leveraged position via REST endpoint
+// See: src/test-create-order.ts  |  npm run hl:order
+import axios from 'axios';
+import { createHash, createCipheriv } from 'crypto';
+import { CryptoUtils } from 'gdex.pro-sdk';
+
+const nonce = (Date.now() + Math.floor(Math.random() * 1000)).toString();
+const params = { coin: 'ETH', isLong: true, price: '1500', size: '0.013',
+  reduceOnly: false, nonce, tpPrice: '0', slPrice: '0', isMarket: false };
+const encoded = CryptoUtils.encodeInputData('hl_create_order', params);
+const sig = CryptoUtils.sign(`hl_create_order-${userId}-${encoded}`, session.tradingPrivateKey);
+const payload = { userId, data: encoded, signature: sig, apiKey: session.apiKey };
+// ... encrypt payload and POST to /v1/hl/create_order
 ```
 
 ## 🔑 Key Concepts
@@ -292,7 +289,7 @@ GDEX provides a deposit address for each user:
 
 ## 🧪 Test Suite
 
-35+ comprehensive tests covering:
+36 comprehensive tests covering:
 
 - ✅ Token operations (trending, search, prices)
 - ✅ User operations (holdings, watchlist)
@@ -335,12 +332,11 @@ const session = await createAuthenticatedSession({...});
 const trending = await getTrendingTokens(sdk, 1);
 
 // 3. Buy
-const result = await buyToken(
-  session,
-  '5000000',  // 0.005 SOL
-  trending[0].address,
-  622112261
-);
+const result = await buyToken(session, {
+  tokenAddress: trending[0].address,
+  amount: '5000000',  // 0.005 SOL
+  chainId: 622112261,
+});
 
 console.log('Trade:', result.isSuccess ? 'Success!' : 'Failed');
 ```

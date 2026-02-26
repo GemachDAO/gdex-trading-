@@ -32,7 +32,21 @@
     "hl:setup": "ts-node src/hyperliquid-deposit-and-trade.ts",
     "hl:fund-and-trade": "ts-node src/fund-and-trade-hl.ts",
     "explore:data": "ts-node src/explore-sdk-data.ts",
-    "wallets:qr": "ts-node src/wallet-qr-codes.ts"
+    "wallets:qr": "ts-node src/wallet-qr-codes.ts",
+    "hl:positions": "ts-node src/hl-positions.ts",
+    "hl:history": "ts-node src/hl-trade-history.ts",
+    "hl:dashboard": "ts-node src/hl-dashboard.ts",
+    "hl:balance": "ts-node src/check-hl-balances.ts",
+    "deposit:hl": "ts-node src/deposit-hl-correct.ts",
+    "hl:order": "ts-node src/test-create-order.ts",
+    "test:hl": "ts-node src/test-hl-new-sdk-approach.ts",
+    "pumpfun:alpha": "ts-node src/pumpfun-alpha.ts",
+    "pumpfun:scanner": "ts-node src/pumpfun-scanner.ts",
+    "pumpfun:analyst": "ts-node src/pumpfun-analyst.ts",
+    "pumpfun:trader": "ts-node src/pumpfun-trader.ts",
+    "pumpfun:risk": "ts-node src/pumpfun-risk.ts",
+    "pumpfun:analytics": "ts-node src/pumpfun-analytics.ts",
+    "pumpfun:scalper": "ts-node src/pumpfun-scalper.ts"
   },
   "keywords": [
     "gdex",

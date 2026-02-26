@@ -569,23 +569,14 @@ async function testTradingExecution(
     // Sort by txCount descending — high activity = real liquidity
     const sorted = [...newest].sort((a: any, b: any) => (b.txCount || 0) - (a.txCount || 0));
 
-    // Check if all tokens are Token2022 (GDEX backend limitation as of Feb 2026)
-    const allToken2022 = sorted.length > 0 && sorted.every((tok: any) => tok.isToken2022 === true);
-    if (allToken2022) {
-      console.log('  ⚠ WARNING: All available pump.fun tokens are Token-2022 standard.');
-      console.log('    GDEX backend does not yet support Token2022 buys — trades will return isSuccess: false.');
-      console.log('    This is a backend limitation, not a code bug. Older (pre-2022) tokens work fine.');
-    }
-
-    // Prefer non-Token2022 pump tokens with activity
+    // Pick most active pump.fun token — Token2022 is fully supported by GDEX
     let targetToken = sorted.find((t: any) =>
       t.address?.endsWith('pump') &&
-      !t.isToken2022 &&
       (t.txCount || 0) > 20 &&
       (t.bondingCurveProgress || 0) > 5
     );
 
-    // Fallback: any active pump token (including Token2022 for test purposes)
+    // Fallback: any active pump token
     if (!targetToken) {
       targetToken = sorted.find((t: any) => t.address?.endsWith('pump') && (t.txCount || 0) > 20);
     }
@@ -601,7 +592,7 @@ async function testTradingExecution(
     }
 
     const t = targetToken as any;
-    const tokenStandard = t.isToken2022 ? ' [Token2022 — may fail]' : ' [standard]';
+    const tokenStandard = t.isToken2022 ? ' [Token2022]' : ' [SPL]';
     console.log(`  Found token: ${t.symbol} (${t.address.slice(0, 8)}...)${tokenStandard}`);
     console.log(`  Price: $${t.priceUsd ?? 'Unknown'} | txCount: ${t.txCount ?? 0} | bondingCurve: ${t.bondingCurveProgress ?? 0}%`);
     logResult('findToken', true, `Found ${t.symbol} for test trade${t.isToken2022 ? ' (Token2022)' : ''}`);
@@ -621,14 +612,10 @@ async function testTradingExecution(
       if (buyResult?.isSuccess) {
         logResult('buy', true, `Buy successful! Hash: ${(buyResult as any).hash?.slice(0, 16)}...`);
         console.log(`    Transaction: ${(buyResult as any).hash}`);
-      } else if (t.isToken2022) {
-        // Token2022 buys are known to fail on GDEX backend as of Feb 2026
-        logResult('buy', true, `Token2022 buy returned isSuccess:false (known GDEX limitation — backend fix pending)`);
-        console.log(`    Hash: ${(buyResult as any).hash?.slice(0, 20)}...`);
-        console.log(`    ℹ All new pump.fun tokens are Token2022. Older standard tokens trade fine.`);
       } else {
         logResult('buy', false, `Buy failed: ${(buyResult as any)?.message ?? 'Unknown error'}`);
         console.log(`    Response: ${JSON.stringify(buyResult).slice(0, 200)}`);
+        console.log(`    Note: Ensure custodial wallet has sufficient SOL (>0.01 SOL recommended)`);
       }
     } catch (buyErr: any) {
       logResult('buy', false, `Buy error: ${buyErr.message}`);

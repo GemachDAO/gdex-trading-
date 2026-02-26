@@ -26,7 +26,8 @@ npm run solana:limit-orders # Test limit orders with TP/SL
 npm run base:trade          # Test Base chain trading
 npm run base:balance        # Check Base balances
 
-# HyperLiquid (⚠️ Opening positions broken, closing works)
+# HyperLiquid (✅ Opening positions WORKING as of Feb 26, 2026)
+npm run hl:order            # Place & cancel ETH limit order (WORKING!)
 npm run hl:copytrade        # Copy top HyperLiquid traders (WORKS)
 npm run hl:setup            # HyperLiquid deposit & trade guide
 npm run check:positions     # Check HyperLiquid positions
@@ -47,8 +48,8 @@ This is a TypeScript trading bot built on the `gdex.pro-sdk` package for the GDE
 - `src/index.ts` — Barrel exports for all public APIs; CLI entry point runs test suite
 - `src/auth.ts` — Authentication & session management: `createAuthenticatedSession()`, `initSDK()`, `getEffectiveApiKey()`, `ensureEVMWallet()`, `GDEXSession` interface
 - `src/trading.ts` — Trading helpers that accept a `GDEXSession`: `buyToken()`, `sellToken()`, `createLimitBuyOrder()`, `createLimitSellOrder()`, `getOrders()`, `formatSolAmount()`, `formatEthAmount()`
-- `src/market.ts` — Market data helpers: `getTrendingTokens()`, `searchTokens()`, `getTokenPrice()`, `getNewestTokens()`, `getNativePrices()`, `getHoldings()`, `getUserInfo()`
-- `src/config.ts` — Loads `.env` via dotenv, exports `Config` interface, `loadConfig()`, `validateConfig()`, `CHAIN_NAMES` lookup map, and `REQUIRED_HEADERS` (Origin/Referer headers needed for all API calls)
+- `src/market.ts` — Market data helpers: `getTrendingTokens()`, `searchTokens()`, `getTokenPrice()`, `getNewestTokens()`, `getNativePrices()`, `getXstocks()`, `getChartTokenPumpfun()`, `getHoldings()`, `getUserInfo()`, `getWatchList()`, `getReferralStats()`
+- `src/config.ts` — Loads `.env` via dotenv, exports `Config` interface, `loadConfig()`, `validateConfig()`, `CHAIN_NAMES` lookup map, and `REQUIRED_HEADERS` (Origin/Referer/UA headers needed for all API calls)
 - `src/wallet.ts` — Wallet generation for Solana (bs58/Keypair) and EVM (ethers), `.env` persistence, chain-type detection helpers (`isSolanaChain`, `isEVMChain`)
 - `src/test-suite.ts` — Comprehensive SDK test suite (8 phases): tokens, user, trading, copyTrade, hyperLiquid, WebSocket, trading execution, CryptoUtils
 - **`src/deposit-correct-flow.ts`** — ✅ **Working custodial deposit implementation** (use this for deposits!)
@@ -150,7 +151,19 @@ const sell = await sellToken(session, {
 
 **Quick command:** `npm run solana:swap`
 
-## 🎉 HyperLiquid Perpetual Futures - MAJOR BREAKTHROUGH (Feb 12, 2026)
+## 🎉 HyperLiquid Perpetual Futures - FULLY WORKING (Feb 26, 2026)
+
+### ✅ CRITICAL: Browser User-Agent Required
+
+ALL GDEX API calls (GET and POST) require a browser-like User-Agent. `axios/1.x.x` gets 403.
+
+```typescript
+const GDEX_HEADERS = {
+  'Origin': 'https://gdex.pro',
+  'Referer': 'https://gdex.pro/',
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+};
+```
 
 ### ✅ DEPOSIT TO HYPERLIQUID - WORKING!
 
@@ -175,39 +188,75 @@ const computedData = encrypt(JSON.stringify(payload), apiKey);
 
 await axios.post(`${apiUrl}/hl/deposit`, { computedData }, {
   headers: {
-    'Origin': 'https://gdex.pro',  // CRITICAL for CORS
+    'Origin': 'https://gdex.pro',
     'Referer': 'https://gdex.pro/',
+    'User-Agent': 'Mozilla/5.0 ...',  // REQUIRED - browser UA
   }
 });
 ```
 
-**Key Requirements**:
-- ✅ CORS headers: `Origin: https://gdex.pro` (required!)
-- ✅ Encoding: `CryptoUtils.encodeInputData("hl_deposit", ...)`
-- ✅ Signing: `hl_deposit-${userId}-${encodedData}`
-- ✅ Full payload encryption with API key
-
-### ⚠️ LEVERAGED POSITION OPENING - IN PROGRESS
+### ✅ OPENING LEVERAGED POSITIONS - WORKING! (Feb 26, 2026)
 
 **Endpoint**: `POST /v1/hl/create_order`
-**Status**: Website works, our code gets "Sent order failed"
+**Status**: ✅ **VERIFIED WORKING** - Orders successfully placed on HyperLiquid
+**Script**: `src/test-create-order.ts`
 
-**What We Know**:
-- ✅ Endpoint: `/v1/hl/create_order`
-- ✅ CORS headers working (same as deposit)
-- ✅ Encoding: `CryptoUtils.encodeInputData("hl_create_order", params)`
-- ✅ Balance: $10 on custodial HyperLiquid account
-- ✅ **Website successfully places orders** (confirmed Feb 12, 2026)
-- ❌ Code gets "Sent order failed" from HyperLiquid
-- 🔍 **Next**: Compare website payload with code payload
+```typescript
+function generateNonce(): number {
+  return Date.now() + Math.floor(Math.random() * 1000);
+}
 
-**Scripts**:
-- `src/test-hl-new-sdk-approach.ts` - Order placement (needs payload comparison)
-- `src/deposit-hl-correct.ts` - Deposit (WORKING!)
-- `src/check-hl-balances.ts` - Check balances
+const params = {
+  coin: 'ETH',          // Asset to trade
+  isLong: true,         // true=buy, false=sell
+  price: '1024.5',      // Limit price (string)
+  size: '0.013',        // Size in base asset (string)
+  reduceOnly: false,
+  nonce: generateNonce().toString(),  // Numeric-style nonce
+  tpPrice: '0',
+  slPrice: '0',
+  isMarket: false,      // true for market orders
+};
+
+const encodedData = CryptoUtils.encodeInputData('hl_create_order', params);
+const signature = CryptoUtils.sign(`hl_create_order-${userId}-${encodedData}`, session.tradingPrivateKey);
+
+const payload = { userId, data: encodedData, signature, apiKey };  // apiKey required
+const computedData = encrypt(JSON.stringify(payload), apiKey);
+
+const res = await axios.post(`${apiUrl}/hl/create_order`, { computedData }, {
+  headers: { ...GDEX_HEADERS, 'Content-Type': 'application/json' },
+});
+// res.data → { isSuccess: true }
+```
+
+**Key Requirements**:
+- ✅ `nonce` must be numeric-style string (timestamp + random, e.g. `Date.now() + Math.random() * 1000`)
+- ✅ `apiKey` must be included in the encrypted payload
+- ✅ Browser User-Agent (axios default gets 403)
+- ✅ Min order value: price × size ≥ $11
+- ✅ HL orders appear under the EVM **custodial address**, not control wallet
+
+**Querying open orders (use custodial address)**:
+```typescript
+// Get EVM custodial address via getUserInfo with EVM chainId (8453=Base)
+const userInfo = await session.sdk.user.getUserInfo(session.walletAddress, session.encryptedSessionKey, 8453);
+const custodialAddr = userInfo?.address?.toLowerCase();
+
+// Query open orders
+const ordersRes = await axios.get(`${apiUrl}/hl/open_orders?address=${custodialAddr}&dex=`,
+  { headers: GDEX_HEADERS });
+```
+
+**Cancel order** (`POST /v1/hl/cancel_order`):
+- ✅ Works for the most recently tracked order using same pattern as create_order
+- ⚠️ GDEX tracks only one order per userId — cancel the order immediately after placing
+- ⚠️ Cancel fails with "Cancel order failed" for orders placed in previous sessions
 
 ### ✅ What WORKS:
 - ✅ **Depositing to HyperLiquid** via `/v1/hl/deposit` endpoint
+- ✅ **Opening leveraged positions** via `/v1/hl/create_order` ← NEW!
+- ✅ **Cancelling most recent order** via `/v1/hl/cancel_order`
 - ✅ **Spot trading on ALL EVM chains** - Base, Arbitrum, Ethereum, BSC, etc.
 - ✅ **Solana meme coin trading** - Including pump.fun tokens
 - ✅ **Closing HyperLiquid positions**: `hlPlaceOrder` with `reduceOnly=true`
@@ -216,13 +265,28 @@ await axios.post(`${apiUrl}/hl/deposit`, { computedData }, {
 - ✅ **Close all positions**: `hlCloseAll()`
 - ✅ **Withdrawals**: `hlWithdraw()`
 
-### 🔧 What's IN PROGRESS:
-- 🔧 **Opening leveraged positions** via `/v1/hl/create_order` (website confirmed working)
-
 ### ❌ What DOESN'T Work (Legacy SDK Methods):
 - ❌ `hlPlaceOrder` with `reduceOnly=false` → error 102
-- ❌ `hlCreateOrder` (SDK method) → "Sent order failed"
 - ❌ `hlDeposit()` (SDK method) → "Unauthorized"
+- ❌ GET requests without browser User-Agent → 403
+
+## Additional Working REST Endpoints (Confirmed Feb 2026)
+
+All need browser UA header (`Mozilla/5.0 ...Chrome/122.0.0.0`). No SDK wrapper — use axios directly.
+
+| Endpoint | Notes |
+|----------|-------|
+| `GET /v1/status` | Health check → `{"running":true}` |
+| `GET /v1/checkSolanaConnectionRpc` | RPC health → `{"useMainRPC":true}` |
+| `GET /v1/bigbuys/:chainId` | 50 recent whale buys — useful signal (622112261=Solana, 8453=Base) |
+| `GET /v1/copy_trade/wallets?chainId=N` | 300 top-performing copy-trade wallets |
+| `GET /v1/hl/perp_dexes` | Perpetual DEX list incl. XYZ DEX (stocks: AAPL, AMD, AMZN…) |
+| `GET /v1/trending/list?chainId=N` | 20 trending tokens — better than `getTrendingTokens()` for Solana |
+| `GET /v1/hl/top_traders` | HL top traders by volume |
+| `GET /v1/hl/top_traders_by_pnl?limit=N` | HL top traders by PnL (day/week/month/allTime) |
+| `GET /v1/portfolio?userId=&data=&chainId=` | Holdings list (requires encrypted session key as `data`) |
+
+**Note**: `/v1/hl/place_order` is OLD and broken (returns code 102 "close position only"). Use `/v1/hl/create_order` for opening positions.
 
 ## Reference Docs
 
@@ -415,7 +479,7 @@ const result = await buyToken(session, {
 |---------|----------|----------------|-------|
 | **Solana** | 622112261 | ✅ WORKING | Pump.fun tokens work! Verified txs |
 | **Base** | 8453 | ✅ WORKING | Verified buy/sell txs |
-| **Arbitrum** | 42161 | ✅ WORKING | Spot trading works, HL futures opening broken |
+| **Arbitrum** | 42161 | ✅ WORKING | Spot + HL futures WORKING (Feb 26, 2026) |
 | **Ethereum** | 1 | ✅ WORKING | Same custodial wallet as Base/Arb |
 | **BSC** | 56 | ✅ WORKING | Same custodial wallet |
 | **Optimism** | 10 | ✅ WORKING | Same custodial wallet |

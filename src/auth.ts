@@ -17,6 +17,8 @@ export interface GDEXSession {
   sdk: ReturnType<typeof createSDK>;
   /** EVM wallet address (0x-prefixed) */
   walletAddress: string;
+  /** GDEX custodial wallet address for this chain (from login response) */
+  custodialAddress: string;
   /** Session key pair from CryptoUtils.getSessionKey() */
   sessionKeyPair: { privateKey: Buffer; publicKey: Uint8Array };
   /** Encrypted session public key (for authenticated GET requests) */
@@ -168,6 +170,7 @@ export async function createAuthenticatedSession(
   return {
     sdk,
     walletAddress,
+    custodialAddress: (userInfo as any).address as string,
     sessionKeyPair,
     encryptedSessionKey,
     tradingPrivateKey,
