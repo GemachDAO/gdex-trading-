@@ -2,6 +2,14 @@
 
 TypeScript trading bot for [GDEX](https://gdex.pro) decentralized exchange with **revolutionary universal custodial wallet system**.
 
+## Install as a Claude Skill
+
+```bash
+npx skills add GemachDAO/gdex-trading-
+```
+
+Once installed, Claude can trade tokens, check prices, manage HyperLiquid positions, and run the pump.fun scanner automatically on your behalf.
+
 ## 🌟 Key Features
 
 ✅ **Universal EVM Wallet** - ONE custodial address works for ALL EVM chains

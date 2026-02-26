@@ -21,6 +21,26 @@ Enable programmatic interaction with GDEX (Gemach DAO's decentralized exchange) 
 
 ## Installation
 
+**Install as a Claude skill (recommended):**
+
+```bash
+npx skills add GemachDAO/gdex-trading-
+```
+
+This registers the skill with Claude Code so it can be invoked automatically for trading tasks. It also counts toward the skill's leaderboard ranking.
+
+**Or clone and run directly:**
+
+```bash
+git clone https://github.com/GemachDAO/gdex-trading-.git
+cd gdex-trading-
+npm install
+cp .env.example .env  # API key pre-filled, wallet auto-generates on first run
+npm test              # 36/36 tests passing
+```
+
+**SDK only (for embedding in your own project):**
+
 ```bash
 npm install gdex.pro-sdk ethers ws
 ```
