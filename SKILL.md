@@ -870,7 +870,7 @@ Amounts must be in smallest unit as strings:
 
 ## Common Gotchas
 
-1. **API requires browser-like User-Agent** — All requests to `trade-api.gemach.io` must include a browser-like `User-Agent` header (e.g., `Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36`). Without it, you get 403 "Access denied: Non-browser clients not allowed". Additionally, `Origin: https://gdex.pro` and `Referer: https://gdex.pro/` are needed for CORS. The `gdex.pro-sdk` sets `User-Agent` internally, but CLI tools and direct `curl`/`fetch` calls need them manually. Import `REQUIRED_HEADERS` from `gdex-trading` for all three headers.
+1. **API requires browser-like User-Agent** — All requests to `trade-api.gemach.io` must include a browser-like `User-Agent` header. Without it, you get 403. Additionally, `Origin: https://gdex.pro` and `Referer: https://gdex.pro/` are needed for CORS. The `createAuthenticatedSession()` / `initSDK()` helpers inject these automatically. For direct `axios`/`fetch` calls, define a `GDEX_HEADERS` constant manually.
 
 2. **HyperLiquid deposits use custodial flow** — Do NOT use `sdk.hyperLiquid.hlDeposit()` directly! It will fail with "Unauthorized" errors. Instead, get your deposit address from `getUserInfo()` and send USDC to that address on Arbitrum. GDEX processes it automatically (1-10 minutes). Minimum: 5 USDC. See section 4 above for complete implementation.
 
@@ -884,7 +884,7 @@ Amounts must be in smallest unit as strings:
 
 7. **Amount units** — All amounts are strings in smallest units (lamports, wei). Use `formatSolAmount()` and `formatEthAmount()` helpers to convert. For USDC: multiply by `1e6` (not `1^6`!) - 5 USDC = `5 * 1e6` = 5,000,000 units.
 
-8. **No /v1/health endpoint** — Do NOT use `/v1/health` for connectivity checks; it returns 404. Use `sdk.tokens.getNativePrices()` as a lightweight unauthenticated connectivity test instead.
+8. **No /v1/health endpoint** — Do NOT use `/v1/health` for connectivity checks; it returns 404. Use `GET /v1/status` → `{"running":true}` or `sdk.tokens.getNativePrices()` as lightweight unauthenticated checks.
 
 ## Error Handling
 
@@ -921,16 +921,17 @@ Track what works and what needs backend fixes. Update this as endpoints go live.
 | Endpoint | Method | Status | Notes |
 |----------|--------|--------|-------|
 | `tokens.getNewestTokens(chainId, page, search, limit)` | GET | **WORKS** | Paginated, rich token data |
-| `tokens.getTrendingTokens(limit)` | GET | **WORKS** | Cross-chain (may be empty for Solana) |
-| `tokens.searchTokens(query, limit)` | GET | **WORKS** | Search by name/symbol |
+| `tokens.getTrendingTokens(limit)` | GET | **WORKS** | May return 0 for Solana; cross-chain results |
+| `tokens.searchTokens(query, limit)` | GET | **FLAKY** | Intermittent timeouts; use getNewestTokens as fallback |
 | `tokens.getToken(address, chainId)` | GET | **WORKS** | Full detail + sentiment |
 | `tokens.getNativePrices()` | GET | **WORKS** | SOL/ETH/BNB prices |
-| `trading.buy / trading.sell` | POST | **WORKS** | Pump.fun tokens included |
+| `trading.buy / trading.sell` | POST | **WORKS** | Token2022 ✅ Standard SPL ✅ — needs funded custodial wallet |
 | `trading.createLimitBuy / createLimitSell` | POST | **WORKS** | Limit orders |
 | WebSocket `newTokensData` | WS | **WORKS** | Real-time new token alerts |
 | WebSocket `effectedTokensData` | WS | **WORKS** | Real-time price updates |
 | `hyperLiquid.hlPlaceOrder` (reduceOnly=true) | POST | **WORKS** | Close positions only |
-| `hyperLiquid.getHyperliquidUsdcBalance` | GET | **WORKS** | Balance queries |
+| `hyperLiquid.getHyperliquidUsdcBalance` | GET | **WORKS** | Returns HL balance |
+| `user.getUserInfo(addr, sessionKey, chainId)` | GET | **WORKS** | Solana ✅; Arbitrum times out ❌ |
 
 ### Broken / Not Live Endpoints (needs backend fix)
 
@@ -943,6 +944,9 @@ Track what works and what needs backend fixes. Update this as endpoints go live.
 | `hyperLiquid.hlPlaceOrder` (reduceOnly=false) | POST | Error 102 | "Now only support close position" |
 | `hyperLiquid.hlCreateOrder` (any params) | POST | 400 | "Sent order failed" |
 | `hyperLiquid.hlDeposit` | POST | 401 | "Unauthorized" — use custodial flow instead |
+| `hyperLiquid.getGbotUsdcBalance` | GET | Timeout | `/hl/usdc_balance` endpoint consistently times out |
+| `user.getUserInfo(addr, key, 42161)` | GET | Timeout | Arbitrum chainId consistently times out on `/user` |
+| `trading.getTrades(address)` | GET | 404 | Endpoint not live |
 | New `@gdex/sdk` (`api.gdex.io`) | ALL | NXDOMAIN | Domain not live yet |
 
 **Impact:** Without `getPriceHistory`, the scanner can't show OHLCV charts. Currently uses sparklines from polled snapshots as a workaround. Once the price history endpoint goes live, we can add proper candlestick charts.
