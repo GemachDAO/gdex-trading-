@@ -14,7 +14,7 @@ export interface Config {
 
 export function loadConfig(): Config {
   const apiUrl = process.env.GDEX_API_URL || 'https://trade-api.gemach.io/v1';
-  const apiKey = process.env.GDEX_API_KEY || '';
+  const apiKey = process.env.GDEX_API_KEY || '3f6c9e12-7b41-4c2a-9d5e-1a8f3b7e6c90,8d2a5f47-2e13-4b9c-a6f1-0c9e7d3a5b21';
   const walletAddress = process.env.WALLET_ADDRESS || '';
   const privateKey = process.env.PRIVATE_KEY || '';
   const sessionKey = process.env.SESSION_KEY || '';

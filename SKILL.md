@@ -25,9 +25,20 @@ Enable programmatic interaction with GDEX (Gemach DAO's decentralized exchange) 
 npm install gdex.pro-sdk ethers ws
 ```
 
+## 🔑 Pre-Provided API Key (No Sign-Up Required)
+
+A shared API key is included — no account or sign-up needed:
+
+```
+GDEX_API_KEY=3f6c9e12-7b41-4c2a-9d5e-1a8f3b7e6c90,8d2a5f47-2e13-4b9c-a6f1-0c9e7d3a5b21
+```
+
+This key is already the default in `src/config.ts` and pre-filled in `.env.example`.
+Wallets are **auto-generated on first run** — no wallet setup needed either.
+
 ## API Connectivity Requirements (Critical for Agents)
 
-All requests to `trade-api.gemach.io` **must** include a browser-like `User-Agent` header. Without it the API returns **403 "Access denied: Non-browser clients not allowed"**. Additionally, `Origin` and `Referer` headers are required for CORS on HyperLiquid (`/hl/*`) endpoints.
+All requests to `trade-api.gemach.io` **must** include a browser-like `User-Agent` header. Without it the API returns **403 "Access denied: Non-browser clients not allowed"**. Additionally, `Origin` and `Referer` headers are required for CORS.
 
 ### Required Headers
 
@@ -37,71 +48,20 @@ All requests to `trade-api.gemach.io` **must** include a browser-like `User-Agen
 | `Origin` | `https://gdex.pro` | **YES — all requests (CORS)** |
 | `Referer` | `https://gdex.pro/` | **YES — all requests (CORS)** |
 
-### Automatic Injection (Recommended)
-
-`createAuthenticatedSession()` and `initSDK()` automatically patch these headers into the SDK's internal axios instance. **No extra work needed** when using the provided helpers.
-
-### Manual Injection (Direct HTTP Calls)
-
-If making raw `axios`/`fetch`/`curl` calls outside the SDK, include the headers explicitly:
+`createAuthenticatedSession()` and `initSDK()` inject these automatically. For direct `axios`/`fetch` calls:
 
 ```typescript
-import { REQUIRED_HEADERS } from 'gdex-trading';
-// REQUIRED_HEADERS includes User-Agent, Origin, and Referer
-
-await axios.post(`${apiUrl}/hl/deposit`, { computedData }, {
-  headers: { ...REQUIRED_HEADERS }
-});
+const GDEX_HEADERS = {
+  'Origin': 'https://gdex.pro',
+  'Referer': 'https://gdex.pro/',
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+};
+await axios.get('https://trade-api.gemach.io/v1/status', { headers: GDEX_HEADERS });
 ```
 
-For `curl`:
-```bash
-curl -H "User-Agent: Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36" \
-     -H "Origin: https://gdex.pro" \
-     -H "Referer: https://gdex.pro/" \
-     https://trade-api.gemach.io/v1/...
-```
+### Health Check
 
-### Health Check / Connectivity Test
-
-**Do NOT use `/v1/health` or `/`** — those endpoints do not exist and return 404.
-
-The correct health check endpoint is **`/v1/native_prices`** — lightweight, unauthenticated, and confirms the full API pipeline works.
-
-**With curl/fetch (for agents and CLI tools):**
-```bash
-curl -s -H "User-Agent: Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36" \
-     https://trade-api.gemach.io/v1/native_prices
-# Returns 200 with JSON: {"nativePrices":[{"chainId":1,"nativePrice":2019.9},...]} 
-# If 403: missing User-Agent header
-# If no response: service is down
-```
-
-**With Node.js SDK:**
-```typescript
-import { initSDK } from 'gdex-trading';
-
-const sdk = initSDK('https://trade-api.gemach.io/v1');
-try {
-  const prices = await sdk.tokens.getNativePrices();
-  console.log('API reachable:', prices.length, 'chains');
-} catch (e) {
-  console.error('API unreachable:', e.message);
-}
-```
-
-### Actual API URL Paths (for curl/fetch)
-
-The SDK uses these **real** URL paths internally. Use these exact paths for direct HTTP calls:
-
-| SDK Method | HTTP | Actual URL Path |
-|-----------|------|----------------|
-| `tokens.getNativePrices()` | GET | `/v1/native_prices` |
-| `tokens.getTrendingTokens(limit)` | GET | `/v1/trending/list?limit=N` |
-| `tokens.getNewestTokens(chainId,page,_,limit)` | GET | `/v1/newest?chainId=X&page=N&limit=N` |
-| `tokens.searchTokens(query, limit)` | GET | `/v1/token_details?search=Q&limit=N` |
-
-**All paths require `User-Agent: Mozilla/5.0 ...` header.** Without it → 403.
+Use `GET /v1/status` → `{"running":true}` or `sdk.tokens.getNativePrices()`. **Do NOT use `/v1/health`** — returns 404.
 
 ## 🔑 Critical: Universal Custodial Wallet System
 
@@ -173,7 +133,7 @@ import { createAuthenticatedSession, buyToken, formatSolAmount } from 'gdex-trad
 
 // One-call login — merges with .env config for any missing values
 const session = await createAuthenticatedSession({
-  apiKey: process.env.GDEX_API_KEY,
+  apiKey: process.env.GDEX_API_KEY || '3f6c9e12-7b41-4c2a-9d5e-1a8f3b7e6c90,8d2a5f47-2e13-4b9c-a6f1-0c9e7d3a5b21',
   walletAddress: process.env.WALLET_ADDRESS,   // must be 0x-prefixed EVM address
   privateKey: process.env.PRIVATE_KEY,          // EVM private key (login only)
   chainId: 622112261,                           // Solana

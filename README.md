@@ -15,7 +15,7 @@ TypeScript trading bot for [GDEX](https://gdex.pro) decentralized exchange with 
 
 ```bash
 npm install
-cp .env.example .env  # Add your wallet & API key
+cp .env.example .env  # API key pre-filled, wallet auto-generates on first run
 
 # Get wallet addresses for funding
 npm run wallets:qr    # Display QR codes
@@ -24,6 +24,10 @@ npm run wallets:qr    # Display QR codes
 npm run solana:swap   # Trade Solana meme coins
 npm run base:trade    # Trade on Base
 ```
+
+> **No API key needed!** A shared GDEX API key is pre-configured.
+> `GDEX_API_KEY=3f6c9e12-7b41-4c2a-9d5e-1a8f3b7e6c90,8d2a5f47-2e13-4b9c-a6f1-0c9e7d3a5b21`
+> Your EVM wallet auto-generates on first run.
 
 ## 🔑 Universal Custodial Wallet System (**CRITICAL!**)
 
