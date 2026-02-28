@@ -45,16 +45,23 @@ npm test              # 36/36 tests passing
 npm install gdex.pro-sdk ethers ws
 ```
 
-## 🔑 Pre-Provided API Key (No Sign-Up Required)
+## 🔑 API Key & Wallet Setup
 
-A shared API key is included — no account or sign-up needed:
+A shared demo API key ships with the repo — **no account needed for testing**:
 
+```bash
+cp .env.example .env   # shared key is pre-filled
+npm test               # verify 36/36 pass
 ```
-GDEX_API_KEY=3f6c9e12-7b41-4c2a-9d5e-1a8f3b7e6c90,8d2a5f47-2e13-4b9c-a6f1-0c9e7d3a5b21
-```
 
-This key is already the default in `src/config.ts` and pre-filled in `.env.example`.
-Wallets are **auto-generated on first run** — no wallet setup needed either.
+> ⚠️ **Security note:** The shared key is for demos only. Every user who
+> clones with `cp .env.example .env` generates their **own unique wallet**
+> (auto-generated on first run), so their custodial addresses are theirs alone.
+> For real funds get your own API key at https://gdex.pro.
+>
+> Never use wallet addresses shown in documentation as examples — they belong
+> to the repo's development account. Always run `npm run wallets:qr` on your
+> own machine to see **your** addresses.
 
 ## API Connectivity Requirements (Critical for Agents)
 
@@ -90,7 +97,7 @@ Use `GET /v1/status` → `{"running":true}` or `sdk.tokens.getNativePrices()`. *
 ### Your Control Wallet (from .env)
 - Address you control with private key
 - Used for authentication only
-- Example: `0x01779499970726ff4C111dDF58A2CA6c366b0E20`
+- Auto-generated on first run — check yours with `npm run wallets:qr`
 
 ### GDEX Custodial Wallets (GDEX controls)
 - **ONE address for ALL EVM chains** ← This is the game changer!
@@ -151,13 +158,12 @@ The fastest way to authenticate and trade:
 ```typescript
 import { createAuthenticatedSession, buyToken, formatSolAmount } from 'gdex-trading';
 
-// One-call login — merges with .env config for any missing values
+// One-call login — reads credentials from .env automatically
 const session = await createAuthenticatedSession({
-  apiKey: process.env.GDEX_API_KEY || '3f6c9e12-7b41-4c2a-9d5e-1a8f3b7e6c90,8d2a5f47-2e13-4b9c-a6f1-0c9e7d3a5b21',
-  walletAddress: process.env.WALLET_ADDRESS,   // must be 0x-prefixed EVM address
-  privateKey: process.env.PRIVATE_KEY,          // EVM private key (login only)
-  chainId: 622112261,                           // Solana
+  chainId: 622112261, // Solana (or 42161 for Arbitrum/EVM)
 });
+// WALLET_ADDRESS, PRIVATE_KEY, GDEX_API_KEY are read from .env
+// Run `npm run wallets:qr` first to see YOUR generated addresses
 
 // Buy a token — uses session.tradingPrivateKey automatically
 const result = await buyToken(session, {
