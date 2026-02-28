@@ -1,6 +1,6 @@
 ---
 name: gdex-trading
-description: Interact with GDEX decentralized exchange SDK for cryptocurrency trading operations across ALL chains. GDEX uses a universal custodial wallet system - ONE address works for ALL EVM chains (Base, Arbitrum, Ethereum, BSC, Optimism, etc.). Fully working spot trading on all chains + Solana meme coins (pump.fun) + HyperLiquid leveraged perpetual futures (opening positions WORKING as of Feb 26, 2026). Use for: trading tokens, market data, portfolio management, copy trading, HyperLiquid futures, analyzing crypto markets. Triggers: buy/sell, check prices, limit orders, copy traders, monitor positions, trending tokens, multi-chain operations, leveraged futures.
+description: "GDEX decentralized exchange SDK for multi-chain crypto trading. Universal custodial wallet works for ALL EVM chains (Base, Arbitrum, Ethereum, BSC, Optimism). Supports Solana meme coins (pump.fun), HyperLiquid leveraged perpetual futures, spot trading, limit orders, copy trading, and real-time market data. Triggers on buy/sell requests, price checks, limit orders, copy trading, position monitoring, trending tokens, and leveraged futures."
 ---
 
 # GDEX Trading SDK
