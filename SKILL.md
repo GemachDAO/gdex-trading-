@@ -19,25 +19,45 @@ Enable programmatic interaction with GDEX (Gemach DAO's decentralized exchange) 
 ✅ **Real-Time Data** - WebSocket streams + comprehensive analytics
 ✅ **HyperLiquid Futures** - Opening leveraged positions WORKING! (Feb 26, 2026)
 
-## Installation
+## Installation & First-Time Setup
 
-**Install as a Claude skill (recommended):**
-
-```bash
-npx skills add GemachDAO/gdex-trading-
-```
-
-This registers the skill with Claude Code so it can be invoked automatically for trading tasks. It also counts toward the skill's leaderboard ranking.
-
-**Or clone and run directly:**
+### Step 1 — Install
 
 ```bash
 git clone https://github.com/GemachDAO/gdex-trading-.git
 cd gdex-trading-
-npm install
-cp .env.example .env  # API key pre-filled, wallet auto-generates on first run
-npm test              # 36/36 tests passing
+npm install        # also runs postinstall → creates .env automatically
 ```
+
+Or as a Claude skill:
+```bash
+npx skills add GemachDAO/gdex-trading-
+```
+
+### Step 2 — Generate your wallet & get YOUR deposit addresses
+
+```bash
+npm run setup
+```
+
+This command:
+- Auto-generates a fresh EVM wallet (saved to `.env`) if one doesn't exist
+- Authenticates with GDEX and fetches **your personal** custodial addresses
+- Saves them to `.gdex-addresses.json` for agents to read programmatically
+- Prints a JSON line to stdout so bots can parse the output:
+
+```bash
+# Bots: grab your EVM custodial address in one line
+EVM_ADDR=$(npm run setup --silent 2>/dev/null | tail -1 | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).evmCustodial))")
+echo "Deposit EVM funds to: $EVM_ADDR"
+
+# Or just read the saved file after setup:
+cat .gdex-addresses.json
+```
+
+### Step 3 — Fund & Trade
+
+Send funds to **your** custodial addresses (from `npm run setup` output — not addresses shown in this doc, those belong to the repo's dev account).
 
 **SDK only (for embedding in your own project):**
 

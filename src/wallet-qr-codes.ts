@@ -29,6 +29,7 @@ async function displayWalletQRCodes() {
   console.log('│ 📦 GDEX CUSTODIAL - ARBITRUM/HYPERLIQUID                                │');
   console.log('└─────────────────────────────────────────────────────────────────────────┘\n');
 
+  let arbAddress = 'unavailable';
   try {
     const arbSession = await createAuthenticatedSession({
       apiUrl: config.apiUrl,
@@ -44,7 +45,7 @@ async function displayWalletQRCodes() {
       42161
     );
 
-    const arbAddress = arbUserInfo?.address || 'N/A';
+    arbAddress = arbUserInfo?.address || 'unavailable';
 
     console.log(`Address: ${arbAddress}`);
     console.log('\nUse this for:');
@@ -66,6 +67,7 @@ async function displayWalletQRCodes() {
   console.log('│ 📦 GDEX CUSTODIAL - SOLANA                                              │');
   console.log('└─────────────────────────────────────────────────────────────────────────┘\n');
 
+  let solAddress = 'unavailable';
   try {
     const solSession = await createAuthenticatedSession({
       apiUrl: config.apiUrl,
@@ -81,7 +83,7 @@ async function displayWalletQRCodes() {
       622112261
     );
 
-    const solAddress = solUserInfo?.address || 'N/A';
+    solAddress = solUserInfo?.address || 'unavailable';
 
     console.log(`Address: ${solAddress}`);
     console.log('\nUse this for:');
@@ -96,7 +98,7 @@ async function displayWalletQRCodes() {
     console.log(`⚠️  Error: ${error.message}`);
   }
 
-  // Summary
+  // Summary — addresses fetched live, never hardcoded
   console.log('\n' + '═'.repeat(80));
   console.log('📋 QUICK REFERENCE');
   console.log('═'.repeat(80));
@@ -106,9 +108,9 @@ async function displayWalletQRCodes() {
 ├──────────────┼────────────────────────────────────────────────┼───────────────┤
 │ YOUR EVM     │ ${config.walletAddress.substring(0, 42).padEnd(46)} │ Direct control│
 ├──────────────┼────────────────────────────────────────────────┼───────────────┤
-│ GDEX Arb/HL  │ 0x886e83feb8d1774afab4a32047a083434354c6f0     │ HyperLiquid   │
+│ GDEX Arb/HL  │ ${arbAddress.padEnd(46)} │ HyperLiquid   │
 ├──────────────┼────────────────────────────────────────────────┼───────────────┤
-│ GDEX Solana  │ 25xbqQDwE6fnpWW8u7CprZKQPBHfj9sF56pCERxpwMms   │ Solana memes  │
+│ GDEX Solana  │ ${solAddress.padEnd(46)} │ Solana memes  │
 └──────────────┴────────────────────────────────────────────────┴───────────────┘
 `);
 
