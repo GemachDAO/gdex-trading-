@@ -50,7 +50,8 @@
     "pumpfun:analytics": "ts-node src/pumpfun-analytics.ts",
     "pumpfun:scalper": "ts-node src/pumpfun-scalper.ts",
     "hl:scalper": "ts-node src/hl-momentum-scalper.ts",
-    "hl:swap-deposit": "ts-node src/swap-eth-and-deposit.ts"
+    "hl:swap-deposit": "ts-node src/swap-eth-and-deposit.ts",
+    "hl:cancel-orphans": "ts-node src/cancel-orphan-orders.ts"
   },
   "keywords": [
     "gdex",

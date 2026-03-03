@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "gdex-trading": {
+      "source": "GemachDAO/gdex-trading-",
+      "sourceType": "github",
+      "computedHash": "eb5896a9812ead67f536b9a323495f046ecfa595d6023afe5ee35048bc581463"
+    }
+  }
+}

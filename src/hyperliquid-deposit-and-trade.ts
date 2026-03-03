@@ -34,7 +34,7 @@ async function depositAndTradeHyperLiquid() {
   console.log('✅ Your GDEX Deposit Address (Arbitrum):');
   console.log(`   ${depositAddress}`);
   console.log('\n📋 What you need to send:');
-  console.log('   1. USDC (minimum $5, recommend $50+ for trading)');
+  console.log('   1. USDC (minimum $10, recommend $50+ for trading)');
   console.log('   2. ETH for gas (~$1-2 worth)');
   console.log('   Network: Arbitrum One (Chain ID: 42161)');
   console.log('   USDC Contract: 0xaf88d065e77c8cC2239327C5EDb3A432268e5831');
@@ -65,9 +65,9 @@ async function depositAndTradeHyperLiquid() {
     console.log(`   Send at least 0.001 ETH to: ${depositAddress}`);
   }
 
-  if (usdcFormatted < 5) {
+  if (usdcFormatted < 10) {
     console.log('\n⚠️  Need USDC to trade!');
-    console.log(`   Send at least 5 USDC to: ${depositAddress}`);
+    console.log(`   Send at least 10 USDC to: ${depositAddress}`);
     console.log('\n💡 Waiting for deposits...');
     console.log('   Press Ctrl+C when you\'ve sent the funds, then run this script again');
     console.log('\n🔗 Quick links:');

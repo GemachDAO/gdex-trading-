@@ -67,10 +67,12 @@ function patchSDKHeaders(sdk: ReturnType<typeof createSDK>): void {
   try {
     const httpClient = (sdk as any).httpClient;
     if (httpClient?.getClient) {
-      const axios = httpClient.getClient();
-      Object.assign(axios.defaults.headers.common, REQUIRED_HEADERS);
+      const axiosInstance = httpClient.getClient();
+      Object.assign(axiosInstance.defaults.headers.common, REQUIRED_HEADERS);
+      axiosInstance.defaults.timeout = 60000; // 60s — Arbitrum sign_in can be slow
     } else if (httpClient?.client?.defaults) {
       Object.assign(httpClient.client.defaults.headers.common, REQUIRED_HEADERS);
+      httpClient.client.defaults.timeout = 60000;
     }
   } catch {
     // SDK internals changed — headers won't be set, calls may 403

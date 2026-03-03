@@ -574,7 +574,7 @@ npm run base:balance    # Check Base balances
 ```typescript
 // 1. Encode deposit data (use SDK's encodeInputData)
 const encodedData = CryptoUtils.encodeInputData("hl_deposit", {
-  chainId: 42161,  // Arbitrum only
+  chainId: 42161,  // USDC source chain (must be Arbitrum); auth session chainId can be anything (Solana works)
   tokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",  // USDC
   amount: "10000000",  // 10 USDC (6 decimals)
   nonce: generateNonce().toString()
@@ -672,7 +672,7 @@ const res = await axios.post(`${apiUrl}/hl/create_order`, { computedData },
 // Returns: { isSuccess: true, data: {...} }
 ```
 
-**Cancel Order** (works for most recently placed order):
+**Cancel Order** (works for any order — including previous sessions — via explicit `orderId`):
 ```typescript
 const cancelNonce = Date.now() + Math.floor(Math.random() * 1000);
 const cancelParams = { nonce: cancelNonce.toString(), coin: 'ETH', orderId: order.oid.toString() };
@@ -690,13 +690,15 @@ await axios.post(`${apiUrl}/hl/cancel_order`,
 **Command**: `npm run hl:order`
 **Note**: Open orders appear under the EVM custodial address, not the control wallet. Query with `GET /hl/open_orders?address=CUSTODIAL_ADDR&dex=`
 
+**Orphan cleanup**: Test/dev orders accumulate across sessions. Run `npm run hl:cancel-orphans` to cancel all open orders at once (queries HL public API for the full order list, then cancels each by `orderId`).
+
 #### Endpoint Status
 
 | Endpoint | Open | Close | Status |
 |----------|:----:|:-----:|--------|
 | `/v1/hl/deposit` | N/A | N/A | ✅ **WORKING** |
 | `/v1/hl/create_order` | ✅ | N/A | ✅ **WORKING** (Feb 26, 2026) |
-| `/v1/hl/cancel_order` | N/A | ✅ | ✅ **WORKING** (most recent order) |
+| `/v1/hl/cancel_order` | N/A | ✅ | ✅ **WORKING** (any order by explicit orderId) |
 | `hlPlaceOrder` (reduceOnly=true) | ❌ | ✅ | SDK close only |
 | `hlCreateOrder` (SDK method) | ❌ | ❌ | Broken — use REST endpoint |
 | `hlDeposit()` (SDK method) | ❌ | ❌ | Broken — use `/v1/hl/deposit` |
@@ -793,13 +795,13 @@ const usdc = new ethers.Contract(
   ['function transfer(address to, uint256 amount) returns (bool)'],
   wallet
 );
-const tx = await usdc.transfer(depositAddress, ethers.parseUnits('5', 6));
+const tx = await usdc.transfer(depositAddress, ethers.parseUnits('10', 6));
 await tx.wait();
 
 // 3. Poll for completion (1-10 minutes)
 ```
 
-**Deposit Requirements:** Min 5 USDC, Arbitrum only, needs ETH for gas.
+**Deposit Requirements:** Min 10 USDC. The deposit payload `chainId` must be `42161` (Arbitrum — that's where the USDC contract lives). The `createAuthenticatedSession` call can use any chainId including Solana (`622112261`). Needs ETH for gas on Arbitrum.
 
 #### New @gdex/sdk (PENDING - api.gdex.io not live yet)
 
@@ -991,7 +993,7 @@ Amounts must be in smallest unit as strings:
 
 **HyperLiquid:**
 - Deposits: Use custodial flow (send USDC to deposit address)
-- Minimum: 5 USDC
+- Minimum: 10 USDC (API enforced)
 - Withdrawals: `hlWithdraw()` - no decimal multiplication needed
 
 ## Common Gotchas
@@ -1015,7 +1017,7 @@ Amounts must be in smallest unit as strings:
    // Recommended: keep >0.01 SOL for reliable multi-trade operation
    ```
 
-2. **HyperLiquid deposits use custodial flow** — Do NOT use `sdk.hyperLiquid.hlDeposit()` directly! It will fail with "Unauthorized" errors. Instead, get your deposit address from `getUserInfo()` and send USDC to that address on Arbitrum. GDEX processes it automatically (1-10 minutes). Minimum: 5 USDC. See section 4 above for complete implementation.
+2. **HyperLiquid deposits use custodial flow** — Do NOT use `sdk.hyperLiquid.hlDeposit()` directly! It will fail with "Unauthorized" errors. Use the `/v1/hl/deposit` REST endpoint via `src/deposit-5-usdc.ts` (`npm run deposit:hl`). Minimum: **10 USDC** (API enforced — 5 USDC returns `"Too low amount, min should be 10 USDC"`). The `createAuthenticatedSession` call can use any chainId (Solana `622112261` works fine). The deposit payload's `chainId` must remain `42161` (Arbitrum — where the USDC lives). See section 4 above for complete implementation.
 
 3. **EVM wallets for all chains** — The SDK uses secp256k1 signing internally, even for Solana. Always use a `0x`-prefixed EVM wallet address.
 
@@ -1491,7 +1493,7 @@ const isOnline = prices && Object.keys(prices).length > 0;
 
 ### Required Header Injection
 
-The `initSDK()` and `createAuthenticatedSession()` functions automatically inject the required `Origin`, `Referer`, and `User-Agent` headers into the SDK's internal HTTP client. No additional configuration is needed.
+The `initSDK()` and `createAuthenticatedSession()` functions automatically inject the required `Origin`, `Referer`, and `User-Agent` headers into the SDK's internal HTTP client, and set the request timeout to **60 seconds** (the default 10s causes auth to fail on slower chains). No additional configuration is needed.
 
 For agents that bypass the SDK and make direct HTTP calls:
 

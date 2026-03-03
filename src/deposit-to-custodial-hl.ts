@@ -50,10 +50,10 @@ async function depositToCustodialHL() {
 
   console.log(`   Arbitrum USDC Balance: $${balanceUSDC.toFixed(2)}`);
 
-  if (balanceUSDC < 5) {
+  if (balanceUSDC < 10) {
     console.log('\n⚠️  Custodial address needs USDC on Arbitrum first!');
     console.log('\n📝 To fund the custodial address:');
-    console.log(`   1. Send at least 5 USDC to: ${custodialAddress}`);
+    console.log(`   1. Send at least 10 USDC to: ${custodialAddress}`);
     console.log('   2. Use Arbitrum network');
     console.log('   3. Wait 1-2 minutes for confirmation');
     console.log('   4. Run this script again');

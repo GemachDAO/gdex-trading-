@@ -50,7 +50,7 @@ async function displayWalletQRCodes() {
     console.log(`Address: ${arbAddress}`);
     console.log('\nUse this for:');
     console.log('  • HyperLiquid perpetual futures trading');
-    console.log('  • Send USDC on Arbitrum (minimum $5)');
+    console.log('  • Send USDC on Arbitrum (minimum $10)');
     console.log('  • Send ETH for gas (~$0.50)');
     console.log('  • Auto-processed by GDEX in 1-10 minutes\n');
 

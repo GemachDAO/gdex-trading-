@@ -31,6 +31,7 @@ npm run hl:order            # Place & cancel ETH limit order (WORKING!)
 npm run hl:copytrade        # Copy top HyperLiquid traders (WORKS)
 npm run hl:setup            # HyperLiquid deposit & trade guide
 npm run check:positions     # Check HyperLiquid positions
+npm run hl:cancel-orphans   # Cancel all stale/orphaned open orders on HyperLiquid
 
 # Data & Analysis
 npm run explore:data        # Comprehensive SDK data exploration (all available metrics)
@@ -174,7 +175,7 @@ const GDEX_HEADERS = {
 ```typescript
 // Working deposit implementation
 const encodedData = CryptoUtils.encodeInputData("hl_deposit", {
-  chainId: 42161,  // Arbitrum only
+  chainId: 42161,  // USDC source chain (Arbitrum) — auth session can use any chainId (Solana works)
   tokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",  // USDC
   amount: "10000000",  // 10 USDC (6 decimals)
   nonce: generateNonce().toString()
@@ -249,14 +250,15 @@ const ordersRes = await axios.get(`${apiUrl}/hl/open_orders?address=${custodialA
 ```
 
 **Cancel order** (`POST /v1/hl/cancel_order`):
-- ✅ Works for the most recently tracked order using same pattern as create_order
-- ⚠️ GDEX tracks only one order per userId — cancel the order immediately after placing
-- ⚠️ Cancel fails with "Cancel order failed" for orders placed in previous sessions
+- ✅ Works for ANY order by specifying explicit `coin` + `orderId` — including orders from previous sessions
+- ✅ Cancelling by explicit `orderId` is confirmed working (Feb 28, 2026)
+- ⚠️ Always cancel test/dev orders immediately after use — orphaned orders accumulate across sessions
+- 🧹 To clean up stale orders: `npm run hl:cancel-orphans` (queries HL directly, cancels all open orders)
 
 ### ✅ What WORKS:
 - ✅ **Depositing to HyperLiquid** via `/v1/hl/deposit` endpoint
 - ✅ **Opening leveraged positions** via `/v1/hl/create_order` ← NEW!
-- ✅ **Cancelling most recent order** via `/v1/hl/cancel_order`
+- ✅ **Cancelling any order by orderId** via `/v1/hl/cancel_order` (works across sessions)
 - ✅ **Spot trading on ALL EVM chains** - Base, Arbitrum, Ethereum, BSC, etc.
 - ✅ **Solana meme coin trading** - Including pump.fun tokens
 - ✅ **Closing HyperLiquid positions**: `hlPlaceOrder` with `reduceOnly=true`
@@ -354,7 +356,7 @@ const evm_custodial_address = userInfo.address;
 ```typescript
 // Send USDC to same custodial address on Arbitrum
 // Address: 0x886e83feb8d1774afab4a32047a083434354c6f0 (same!)
-// Amount: 5 USDC minimum
+// Amount: 10 USDC minimum (API enforced — 5 USDC returns "Too low amount, min should be 10 USDC")
 // Network: Arbitrum (Chain ID: 42161)
 ```
 
