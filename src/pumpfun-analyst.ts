@@ -18,10 +18,11 @@
  */
 
 import * as fs from 'fs';
+import { tryConnectBus, BusClient } from './pumpfun-bus';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const POLL_MS = 15_000;
+const POLL_MS = 60_000; // safety-net fallback — primary trigger is TOKENS_UPDATE event
 const SCORE_THRESHOLD = 60;
 const MAX_AGE_MS = 60 * 60 * 1000;  // reject tokens older than 60 min
 const WATCHLIST_PATH = '/tmp/pumpfun-watchlist.json';
@@ -83,6 +84,9 @@ interface ScoresFile {
   lastUpdated: string;
   scores: TokenScore[];
 }
+
+// Bus client — no-op until connected
+let bus: BusClient = { publish: () => {}, log: () => {}, close: () => {} };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -218,15 +222,20 @@ function scoreToken(t: WatchedToken): TokenScore {
 
 // ─── Main loop ────────────────────────────────────────────────────────────────
 
-function analyze() {
+// Accepts optional pre-loaded tokens from TOKENS_UPDATE bus event (skips file read)
+function analyze(incomingTokens?: WatchedToken[]) {
   try {
-    if (!fs.existsSync(WATCHLIST_PATH)) {
-      log('Watchlist not ready yet, waiting...');
-      return;
+    let tokens: WatchedToken[];
+    if (incomingTokens) {
+      tokens = incomingTokens;
+    } else {
+      if (!fs.existsSync(WATCHLIST_PATH)) {
+        log('Watchlist not ready yet, waiting...');
+        return;
+      }
+      const wl = JSON.parse(fs.readFileSync(WATCHLIST_PATH, 'utf8'));
+      tokens = wl.tokens ?? [];
     }
-
-    const wl = JSON.parse(fs.readFileSync(WATCHLIST_PATH, 'utf8'));
-    const tokens: WatchedToken[] = wl.tokens ?? [];
 
     if (tokens.length === 0) {
       log('Watchlist empty, nothing to score');
@@ -263,6 +272,9 @@ function analyze() {
     fs.writeFileSync(tmp, JSON.stringify(output, null, 2));
     fs.renameSync(tmp, SCORES_PATH);
 
+    // Push scores to TRADER and SCALPER immediately — no polling delay
+    bus.publish('SCORES_UPDATE', { scores });
+
     const top3 = scores.slice(0, 3).map((s) => `${s.symbol}:${s.score}`).join(', ');
     const hot = scores.filter((s) => s.score >= SCORE_THRESHOLD).length;
     const grads = scores.filter((s) => s.isGraduationCandidate).length;
@@ -277,20 +289,34 @@ function analyze() {
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
-function main() {
+async function main() {
   log('Starting analyst...');
+
+  // Connect to bus — react to TOKENS_UPDATE instantly instead of polling
+  bus = await tryConnectBus('ANALYST', (msg) => {
+    if (msg.type === 'TOKENS_UPDATE') {
+      const tokens: WatchedToken[] = msg.data?.tokens ?? [];
+      if (tokens.length > 0) analyze(tokens);
+    }
+  });
+  log('Connected to message bus — event-driven scoring active');
+
+  // Initial run from file (bus may not have data yet on first launch)
   analyze();
-  const interval = setInterval(analyze, POLL_MS);
+
+  // Safety-net fallback: full rescan every 60s in case bus event was missed
+  const interval = setInterval(() => analyze(), POLL_MS);
 
   const shutdown = () => {
     log('Shutting down analyst');
     clearInterval(interval);
+    bus.close();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  log(`Analyst running — scoring every ${POLL_MS / 1000}s | hard filters active`);
+  log(`Analyst running — event-driven + ${POLL_MS / 1000}s fallback | hard filters active`);
 }
 
 main();

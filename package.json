@@ -43,6 +43,7 @@
     "hl:order": "ts-node src/test-create-order.ts",
     "test:hl": "ts-node src/test-hl-new-sdk-approach.ts",
     "pumpfun:alpha": "ts-node src/pumpfun-alpha.ts",
+    "pumpfun:reset": "node -e \"const fs=require('fs'),now=new Date().toISOString();fs.writeFileSync('/tmp/pumpfun-log.json',JSON.stringify({lastUpdated:now,trades:[]},null,2));fs.writeFileSync('/tmp/pumpfun-positions.json',JSON.stringify({lastUpdated:now,positions:[]},null,2));fs.writeFileSync('/tmp/pumpfun-scalp-positions.json',JSON.stringify({lastUpdated:now,positions:[]},null,2));try{fs.unlinkSync('/tmp/pumpfun-analytics.json')}catch(e){}try{fs.unlinkSync('/tmp/pumpfun-strategy-report.txt')}catch(e){}console.log('Stats reset at',now);\"",
     "pumpfun:scanner": "ts-node src/pumpfun-scanner.ts",
     "pumpfun:analyst": "ts-node src/pumpfun-analyst.ts",
     "pumpfun:trader": "ts-node src/pumpfun-trader.ts",
@@ -68,7 +69,7 @@
     "bs58": "^6.0.0",
     "dotenv": "^16.4.7",
     "ethers": "^6.16.0",
-    "gdex.pro-sdk": "latest",
+    "gdex.pro-sdk": "^1.1.6",
     "ws": "^8.19.0"
   },
   "devDependencies": {

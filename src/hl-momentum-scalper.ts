@@ -1,23 +1,26 @@
 /**
- * HL MOMENTUM SCALPER v2
+ * HL MOMENTUM SCALPER v3
  *
- * Improvements over v1:
- *   - Multi-timeframe confirmation: 5m momentum + 15m trend alignment
- *   - RSI(14) filter from 1m candles: avoids chasing overbought/oversold
- *   - ATR(14) dynamic TP/SL: adapts stops to current volatility
- *   - Volume confirmation: momentum must be on above-avg volume
- *   - Funding rate filter: avoids crowded/expensive funding-side trades
- *   - Composite signal score (0-93): only trade when score ≥ MIN_SCORE
- *   - Faster position monitoring: 3s (was 8s)
- *   - 5 coins: BTC, ETH, SOL, AVAX, DOGE (was 3)
- *   - Best-score coin selection: picks coin with highest composite score
+ * New in v3 (adaptive + smarter signals):
+ *   - Adaptive params engine: auto-adjusts MIN_SCORE, momentum threshold,
+ *     and ATR TP/SL multipliers based on rolling trade performance
+ *   - EMA(9/21) crossover signal: detects golden/death crosses and trend
+ *     alignment on 1m candles (+20 for cross, ±10 for alignment)
+ *   - Momentum acceleration scoring: +8 for accelerating moves,
+ *     -12 for chasing exhausted/decelerating momentum
+ *   - Dynamic cooldown: 50s after win, 120s after loss, 75s after timeout
+ *   - Faster scan interval: 15s price polls (was 30s) for quicker entries
+ *   - Adaptive MIN_SCORE range: 44–70 (baseline 58)
+ *   - Adaptive MOMENTUM_PCT range: 0.7–2.2% (baseline 1.0%)
  *
- * Signal score breakdown (max 93):
+ * Signal score breakdown (max 121):
  *   5m momentum strength:    10-30 pts
  *   15m trend alignment:    -15 to +20 pts
  *   RSI confirmation:       -30 to +20 pts
  *   Volume spike:              0 to +15 pts
  *   Funding rate:            -20 to  +8 pts
+ *   EMA(9/21) crossover:    -20 to +20 pts  ← NEW
+ *   Momentum acceleration:  -12 to  +8 pts  ← NEW
  *
  * Usage: npm run hl:scalper
  */
@@ -32,29 +35,43 @@ import { createAuthenticatedSession, GDEXSession } from './auth';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const COINS         = ['BTC', 'ETH', 'SOL', 'AVAX', 'DOGE'];
+const COINS         = ['BTC', 'ETH', 'SOL', 'DOGE', 'WIF'];  // swapped AVAX→WIF (WIF 4x more volatile on %)
 const TRADE_USD     = 11.5;    // ~$11.50 notional per trade
 const TP_PCT        = 0.03;    // fallback TP if ATR unavailable
 const SL_PCT        = 0.015;   // fallback SL if ATR unavailable
 const CRASH_SL_PCT  = 0.025;   // exchange-level crash protection SL
 const TRAIL_TRIGGER = 0.015;   // start trailing after +1.5% profit
 const TRAIL_DIST    = 0.010;   // trail SL 1% behind peak
-const MOMENTUM_PCT  = 1.2;     // 5-min % change required to enter scan pool
+const MOMENTUM_PCT  = 1.0;     // 5-min % change required (adaptive baseline; was 1.2)
 const MOMENTUM_WIN  = 5 * 60_000;
-const POLL_MS       = 30_000;  // 30s price + candle poll
-const MONITOR_MS    = 3_000;   // 3s position check (v1 was 8s)
+const SCAN_MS       = 15_000;  // 15s price poll while scanning (was 30s)
+const POLL_MS       = 30_000;  // 30s price poll during cooldown
+const MONITOR_MS    = 3_000;   // 3s position check
 const MAX_HOLD_MS   = 10 * 60_000;
-const COOLDOWN_MS   = 90_000;
+const COOLDOWN_WIN  = 50_000;  // cooldown after win (dynamic)
+const COOLDOWN_LOSS = 120_000; // cooldown after loss (dynamic)
+const COOLDOWN_TO   = 75_000;  // cooldown after timeout (dynamic)
 const ENTRY_SLIP    = 0.002;
 const CLOSE_SLIP    = 0.004;
 
-// Signal scoring
-const MIN_SCORE     = 52;      // minimum composite score to enter
+// Signal scoring — adaptive baseline (range 44–70)
+const MIN_SCORE     = 58;      // adaptive baseline; v2 was 52 (new EMA/accel components added)
 
-// ATR-based dynamic TP/SL
+// ATR-based dynamic TP/SL — adaptive baselines
 const ATR_PERIOD    = 14;
-const ATR_TP_MULT   = 2.5;    // TP = 2.5x ATR (risk:reward ~2.5:1)
-const ATR_SL_MULT   = 1.0;    // SL = 1.0x ATR
+const ATR_TP_MULT   = 2.5;    // adaptive baseline TP multiplier
+const ATR_SL_MULT   = 1.0;    // adaptive baseline SL multiplier
+
+// Adaptive parameter bounds
+const ADAPT_WINDOW       = 8;    // rolling window of trades to evaluate
+const ADAPT_SCORE_FLOOR  = 44;
+const ADAPT_SCORE_CEIL   = 70;
+const ADAPT_MOM_FLOOR    = 0.7;
+const ADAPT_MOM_CEIL     = 2.2;
+const ADAPT_TP_FLOOR     = 1.5;
+const ADAPT_TP_CEIL      = 4.5;
+const ADAPT_SL_FLOOR     = 0.6;
+const ADAPT_SL_CEIL      = 2.0;
 
 // RSI filter thresholds
 const RSI_PERIOD    = 14;      // RSI lookback period
@@ -132,6 +149,15 @@ interface SignalScore {
   funding: number;
 }
 
+interface AdaptiveParams {
+  minScore: number;
+  momentumPct: number;
+  atrTpMult: number;
+  atrSlMult: number;
+  lastUpdate: number;
+  reason: string;
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 type ScalpState = 'SCANNING' | 'IN_POSITION' | 'COOLDOWN';
@@ -153,6 +179,88 @@ const candleCache: Record<string, CandleCache> = {};
 const fundingRates: Record<string, number> = {};  // coin → rate as decimal (0.0001 = 0.01%)
 let lastFundingRefresh = 0;
 const cachedScores: Record<string, SignalScore & { isLong: boolean }> = {};
+
+const adaptiveParams: AdaptiveParams = {
+  minScore:    MIN_SCORE,
+  momentumPct: MOMENTUM_PCT,
+  atrTpMult:   ATR_TP_MULT,
+  atrSlMult:   ATR_SL_MULT,
+  lastUpdate:  0,
+  reason:      'init',
+};
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function updateAdaptiveParams(exitReason: 'TP' | 'SL' | 'TRAIL' | 'TIMEOUT') {
+  const window = tradeHistory.slice(-ADAPT_WINDOW);
+  if (window.length < 2) return; // need 2+ trades to adapt
+
+  const n = window.length;
+  const wins      = window.filter(t => t.pnlUsd > 0).length;
+  const slHits    = window.filter(t => t.exitReason === 'SL').length;
+  const tpHits    = window.filter(t => t.exitReason === 'TP' || t.exitReason === 'TRAIL').length;
+  const timeouts  = window.filter(t => t.exitReason === 'TIMEOUT').length;
+
+  const winRate     = wins / n;
+  const slRate      = slHits / n;
+  const tpRate      = tpHits / n;
+  const timeoutRate = timeouts / n;
+
+  let { minScore, momentumPct, atrTpMult, atrSlMult } = adaptiveParams;
+  const changes: string[] = [];
+
+  // ── Entry threshold: tighten on losses, loosen on wins ──────────────────
+  if (winRate >= 0.7) {
+    minScore    = clamp(minScore - 2, ADAPT_SCORE_FLOOR, ADAPT_SCORE_CEIL);
+    momentumPct = clamp(momentumPct - 0.1, ADAPT_MOM_FLOOR, ADAPT_MOM_CEIL);
+    changes.push(`wr:${(winRate * 100).toFixed(0)}%↓score`);
+  } else if (winRate <= 0.3) {
+    minScore    = clamp(minScore + 4, ADAPT_SCORE_FLOOR, ADAPT_SCORE_CEIL);
+    momentumPct = clamp(momentumPct + 0.15, ADAPT_MOM_FLOOR, ADAPT_MOM_CEIL);
+    changes.push(`wr:${(winRate * 100).toFixed(0)}%↑score`);
+  } else if (winRate <= 0.45) {
+    minScore    = clamp(minScore + 2, ADAPT_SCORE_FLOOR, ADAPT_SCORE_CEIL);
+    changes.push(`wr:${(winRate * 100).toFixed(0)}%↑score`);
+  }
+
+  // ── SL multiplier: widen if being stopped out too often ──────────────────
+  if (slRate >= 0.6) {
+    atrSlMult = clamp(atrSlMult + 0.15, ADAPT_SL_FLOOR, ADAPT_SL_CEIL);
+    changes.push(`sl:${(slRate * 100).toFixed(0)}%↑slMult`);
+  } else if (slRate <= 0.2 && tpRate >= 0.5) {
+    atrSlMult = clamp(atrSlMult - 0.05, ADAPT_SL_FLOOR, ADAPT_SL_CEIL);
+    changes.push(`sl:low↓slMult`);
+  }
+
+  // ── TP multiplier: bring in if too many timeouts; extend if TPs hit often ─
+  if (timeoutRate >= 0.5) {
+    atrTpMult = clamp(atrTpMult - 0.2, ADAPT_TP_FLOOR, ADAPT_TP_CEIL);
+    changes.push(`to:${(timeoutRate * 100).toFixed(0)}%↓tpMult`);
+  } else if (tpRate >= 0.65 && timeoutRate < 0.15) {
+    atrTpMult = clamp(atrTpMult + 0.15, ADAPT_TP_FLOOR, ADAPT_TP_CEIL);
+    changes.push(`tp:${(tpRate * 100).toFixed(0)}%↑tpMult`);
+  }
+
+  // ── Per-exit micro-adjustment ─────────────────────────────────────────────
+  if (exitReason === 'SL') {
+    minScore = clamp(minScore + 1, ADAPT_SCORE_FLOOR, ADAPT_SCORE_CEIL);
+  } else if (exitReason === 'TP' || exitReason === 'TRAIL') {
+    minScore = clamp(minScore - 1, ADAPT_SCORE_FLOOR, ADAPT_SCORE_CEIL);
+  }
+
+  adaptiveParams.minScore    = Math.round(minScore);
+  adaptiveParams.momentumPct = Math.round(momentumPct * 10) / 10;
+  adaptiveParams.atrTpMult   = Math.round(atrTpMult * 10) / 10;
+  adaptiveParams.atrSlMult   = Math.round(atrSlMult * 10) / 10;
+  adaptiveParams.lastUpdate  = Date.now();
+  adaptiveParams.reason      = changes.join(' ') || 'stable';
+
+  if (changes.length > 0) {
+    addLog(`🧠 Adapt: score≥${adaptiveParams.minScore} mom≥${adaptiveParams.momentumPct}% TP:${adaptiveParams.atrTpMult}x SL:${adaptiveParams.atrSlMult}x`);
+  }
+}
 
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
@@ -319,6 +427,17 @@ function calcATR(candles: Candle[], period = ATR_PERIOD): number {
   return recent.reduce((a, b) => a + b, 0) / recent.length;
 }
 
+function calcEMAValues(candles: Candle[], period: number): number[] {
+  const closes = candles.map(c => parseFloat(c.c)).filter(v => !isNaN(v));
+  if (closes.length < period) return [];
+  const k = 2 / (period + 1);
+  const emas: number[] = [closes[0]];
+  for (let i = 1; i < closes.length; i++) {
+    emas.push(closes[i] * k + emas[i - 1] * (1 - k));
+  }
+  return emas;
+}
+
 /** Momentum of last ~1h using 15m candles */
 function calc15mMom(candles: Candle[]): number {
   if (candles.length < 4) return 0;
@@ -434,6 +553,57 @@ function scoreSignal(coin: string, isLong: boolean, mom5m: number): SignalScore 
     reasons.push(`fund:${fundBps.toFixed(2)}bps(${fundPts})`);
   }
 
+  // ── 6. EMA(9/21) crossover & trend alignment (-20 to +20 pts) ────────────
+  if (m1.length >= 22) {
+    const ema9  = calcEMAValues(m1, 9);
+    const ema21 = calcEMAValues(m1, 21);
+    if (ema9.length >= 2 && ema21.length >= 2) {
+      const e9 = ema9[ema9.length - 1],  prevE9  = ema9[ema9.length - 2];
+      const e21 = ema21[ema21.length - 1], prevE21 = ema21[ema21.length - 2];
+      const bullish         = e9 > e21;
+      const justCrossedUp   = prevE9 <= prevE21 && e9 > e21;
+      const justCrossedDown = prevE9 >= prevE21 && e9 < e21;
+      let emaPts: number;
+      let emaTag: string;
+      if (justCrossedUp || justCrossedDown) {
+        const aligned = (isLong && justCrossedUp) || (!isLong && justCrossedDown);
+        emaPts = aligned ? 20 : -20;
+        emaTag = aligned ? 'EMA:✓cross' : 'EMA:✗cross';
+      } else if ((isLong && bullish) || (!isLong && !bullish)) {
+        emaPts = 10;
+        emaTag = isLong ? 'EMA:bull' : 'EMA:bear';
+      } else {
+        emaPts = -10;
+        emaTag = isLong ? 'EMA:bear!' : 'EMA:bull!';
+      }
+      score += emaPts;
+      reasons.push(`${emaTag}(${emaPts})`);
+    }
+  } else {
+    reasons.push('EMA:n/a');
+  }
+
+  // ── 7. Momentum acceleration / deceleration (-12 to +8 pts) ─────────────
+  const nowTs   = Date.now();
+  const hist    = priceHistory[coin] || [];
+  const last90  = hist.filter(p => p.ts >= nowTs - 90_000);
+  const prev4m  = hist.filter(p => p.ts >= nowTs - 4 * 60_000 && p.ts < nowTs - 90_000);
+  if (last90.length >= 2 && prev4m.length >= 2) {
+    const recentChg = Math.abs(
+      (last90[last90.length - 1].price - last90[0].price) / last90[0].price,
+    );
+    const prevChg = Math.abs(
+      (prev4m[prev4m.length - 1].price - prev4m[0].price) / prev4m[0].price,
+    );
+    const accelPts = recentChg > prevChg * 0.8 ? 8
+      : recentChg < prevChg * 0.4              ? -12
+      : 0;
+    if (accelPts !== 0) {
+      score += accelPts;
+      reasons.push(`accel:${accelPts > 0 ? '↑' : '↓'}(${accelPts})`);
+    }
+  }
+
   const atr = calcATR(m1);
   const price = currentPrices[coin] || 1;
   const atrPct = (atr / price) * 100;
@@ -506,7 +676,7 @@ async function placeOrder(
 
 function calcSize(coin: string, price: number): string {
   const szDecimals: Record<string, number> = {
-    BTC: 5, ETH: 4, SOL: 2, AVAX: 2, DOGE: 0, LINK: 2, ARB: 1,
+    BTC: 5, ETH: 4, SOL: 2, AVAX: 2, DOGE: 0, LINK: 2, ARB: 1, WIF: 0, TIA: 1,
   };
   const dec = szDecimals[coin] ?? 3;
   const mult = Math.pow(10, dec);
@@ -521,15 +691,19 @@ function calcTpSl(coin: string, price: number, isLong: boolean) {
   const atr = cache ? calcATR(cache.m1) : 0;
   const atrPct = atr / price;
 
+  // Use adaptive multipliers (updated by updateAdaptiveParams after each trade)
+  const tpMult = adaptiveParams.atrTpMult;
+  const slMult = adaptiveParams.atrSlMult;
+
   // Use ATR if within sensible bounds (0.05% to 5% of price)
   if (atr > 0 && atrPct >= 0.0005 && atrPct <= 0.05) {
-    const tpDist = Math.max(atr * ATR_TP_MULT, price * 0.008); // floor 0.8%
-    const slDist = Math.max(atr * ATR_SL_MULT, price * 0.005); // floor 0.5%
+    const tpDist = Math.max(atr * tpMult, price * 0.008); // floor 0.8%
+    const slDist = Math.max(atr * slMult, price * 0.005); // floor 0.5%
     return {
       tpPrice: isLong ? price + tpDist : price - tpDist,
       slPrice: isLong ? price - slDist : price + slDist,
       crashSlPrice: isLong ? price * (1 - CRASH_SL_PCT) : price * (1 + CRASH_SL_PCT),
-      method: `ATR×${ATR_TP_MULT}/${ATR_SL_MULT} (${(atrPct * 100).toFixed(2)}%)`,
+      method: `ATR×${tpMult}/${slMult} (${(atrPct * 100).toFixed(2)}%)`,
     };
   }
 
@@ -571,7 +745,7 @@ function render() {
 
   const lines: string[] = [];
 
-  lines.push(C.CYN + hline('╔', '═', '╗', 'HL MOMENTUM SCALPER v2') + C.RST);
+  lines.push(C.CYN + hline('╔', '═', '╗', 'HL MOMENTUM SCALPER v3') + C.RST);
 
   // Status bar
   const stateStr = scalpState === 'SCANNING'    ? `${C.GRN}SCANNING${C.RST}`
@@ -588,8 +762,15 @@ function render() {
   const hasCandles = Object.keys(candleCache).length > 0;
   const dataStr = `${hasCandles ? `${C.GRN}C${C.RST}` : `${C.DIM}c${C.RST}`}${hasFunding ? `${C.GRN}F${C.RST}` : `${C.DIM}f${C.RST}`}`;
   lines.push(row(
-    padV(`Bal:${C.BOLD}$${hlBalance.toFixed(2)}${C.RST}  ${stateStr}  ${timeInfo}  Trades:${allWins}W/${totalTrades - allWins}L  data:${dataStr}  minScore:${MIN_SCORE}`, INNER)
+    padV(`Bal:${C.BOLD}$${hlBalance.toFixed(2)}${C.RST}  ${stateStr}  ${timeInfo}  Trades:${allWins}W/${totalTrades - allWins}L  data:${dataStr}  score≥${adaptiveParams.minScore}`, INNER)
   ));
+
+  // Adaptive params row
+  const adaptAge = adaptiveParams.lastUpdate > 0 ? fmtDur(Date.now() - adaptiveParams.lastUpdate) + ' ago' : 'no trades yet';
+  lines.push(row(padV(
+    `  ${C.MAG}🧠 Adapt${C.RST}  score≥${C.BOLD}${adaptiveParams.minScore}${C.RST}  mom≥${C.BOLD}${adaptiveParams.momentumPct}%${C.RST}  TP:${C.BOLD}${adaptiveParams.atrTpMult}x${C.RST}  SL:${C.BOLD}${adaptiveParams.atrSlMult}x${C.RST}  ${C.DIM}[${adaptiveParams.reason} · ${adaptAge}]${C.RST}`,
+    INNER,
+  )));
 
   // Prices + momentum + signal scores
   lines.push(C.CYN + hline('╠', '═', '╣', 'PRICES  MOMENTUM(5m)  SIGNAL SCORE') + C.RST);
@@ -641,7 +822,7 @@ function render() {
 
   const pts = COINS.map(c => (priceHistory[c] || []).filter(p => p.ts >= Date.now() - MOMENTUM_WIN).length);
   lines.push(row(padV(
-    `  ${C.DIM}Threshold:±${MOMENTUM_PCT}%  Score≥${MIN_SCORE}  ATR TP:${ATR_TP_MULT}x SL:${ATR_SL_MULT}x  pts:[${pts.join(',')}]${C.RST}`,
+    `  ${C.DIM}Threshold:±${adaptiveParams.momentumPct}%  Score≥${adaptiveParams.minScore}  ATR TP:${adaptiveParams.atrTpMult}x SL:${adaptiveParams.atrSlMult}x  pts:[${pts.join(',')}]${C.RST}`,
     INNER,
   )));
 
@@ -675,7 +856,7 @@ function render() {
   } else if (scalpState === 'COOLDOWN') {
     lines.push(row(padV(`  ${C.DIM}Cooling down ${fmtDur(cdLeft)}...${C.RST}`, INNER)));
   } else {
-    lines.push(row(padV(`  ${C.DIM}Scanning — need ±${MOMENTUM_PCT}% momentum + score≥${MIN_SCORE}...${C.RST}`, INNER)));
+    lines.push(row(padV(`  ${C.DIM}Scanning — need ±${adaptiveParams.momentumPct}% momentum + score≥${adaptiveParams.minScore}...${C.RST}`, INNER)));
   }
 
   // Trade history
@@ -810,15 +991,20 @@ async function closePosition(session: GDEXSession, reason: 'TP' | 'SL' | 'TRAIL'
 
   saveTrades();
   clearState();
+  updateAdaptiveParams(reason);
 
   try {
     hlBalance = await session.sdk.hyperLiquid.getHyperliquidUsdcBalance(custodialAddr) ?? hlBalance;
   } catch { /* non-fatal */ }
 
+  const dynamicCooldown = reason === 'SL'                     ? COOLDOWN_LOSS
+    : reason === 'TP' || reason === 'TRAIL'                   ? COOLDOWN_WIN
+    : COOLDOWN_TO;
+
   position = null;
-  cooldownUntil = Date.now() + COOLDOWN_MS;
+  cooldownUntil = Date.now() + dynamicCooldown;
   scalpState = 'COOLDOWN';
-  addLog(`✅ Closed. Cooling ${COOLDOWN_MS / 1000}s.`);
+  addLog(`✅ Closed. Cooling ${dynamicCooldown / 1000}s (${reason}).`);
 }
 
 async function monitorPosition(session: GDEXSession) {
@@ -899,12 +1085,52 @@ async function scanSignals(session: GDEXSession) {
   let bestMom = 0;
   let bestSig: SignalScore | null = null;
 
+  let activeMomThresh = adaptiveParams.momentumPct;
+  let activeMinScore  = adaptiveParams.minScore;
+
+  // ── RSI Extreme Override ────────────────────────────────────────────────────
+  // When market is deeply oversold/overbought, any uptick is a valid entry.
+  // Drop momentum gate to 0.5% and reduce min score by 8.
+  let rsiExtremeMode = false;
+  let rsiExtremeDir = '';
+  for (const coin of COINS) {
+    const cache = candleCache[coin];
+    if (!cache || cache.m1.length < RSI_PERIOD + 1) continue;
+    const rsi = calcRSI(cache.m1);
+    if (rsi < 25) {
+      rsiExtremeMode = true;
+      rsiExtremeDir = 'OS';  // oversold — looking for longs
+      break;
+    }
+    if (rsi > 75) {
+      rsiExtremeMode = true;
+      rsiExtremeDir = 'OB';  // overbought — looking for shorts
+      break;
+    }
+  }
+  if (rsiExtremeMode) {
+    activeMomThresh = Math.min(activeMomThresh, 0.5);  // only 0.5% needed
+    activeMinScore  = Math.max(activeMinScore - 8, ADAPT_SCORE_FLOOR);
+    addLog(`⚡ RSI Extreme(${rsiExtremeDir}): mom≥0.5% score≥${activeMinScore}`);
+  }
+
   for (const coin of COINS) {
     const mom = momentum5m(coin);
-    if (Math.abs(mom) < MOMENTUM_PCT) {
-      // Below threshold — still compute score for display (neutral)
+    if (Math.abs(mom) < activeMomThresh) {
+      // Below threshold — still compute score for display
       const sig = scoreSignal(coin, mom >= 0, mom);
       cachedScores[coin] = { ...sig, isLong: mom >= 0 };
+      continue;
+    }
+    // In RSI extreme oversold mode, only look for longs; overbought → only shorts
+    if (rsiExtremeMode && rsiExtremeDir === 'OS' && mom < 0) {
+      const sig = scoreSignal(coin, false, mom);
+      cachedScores[coin] = { ...sig, isLong: false };
+      continue;
+    }
+    if (rsiExtremeMode && rsiExtremeDir === 'OB' && mom > 0) {
+      const sig = scoreSignal(coin, true, mom);
+      cachedScores[coin] = { ...sig, isLong: true };
       continue;
     }
     const isLong = mom > 0;
@@ -920,12 +1146,13 @@ async function scanSignals(session: GDEXSession) {
   }
 
   if (bestCoin && bestSig) {
-    if (bestScore >= MIN_SCORE) {
+    if (bestScore >= activeMinScore) {
       const isLong = bestMom > 0;
-      addLog(`📊 Best: ${bestCoin} score:${bestScore} ${isLong ? 'LONG' : 'SHORT'} mom:${bestMom.toFixed(2)}%`);
+      const tag = rsiExtremeMode ? ` [RSI-extreme:${rsiExtremeDir}]` : '';
+      addLog(`📊 Best: ${bestCoin} score:${bestScore} ${isLong ? 'LONG' : 'SHORT'} mom:${bestMom.toFixed(2)}%${tag}`);
       await openPosition(session, bestCoin, isLong, bestSig);
     } else {
-      addLog(`📊 Signals below score (best:${bestCoin} ${bestScore}<${MIN_SCORE}) — ${bestSig.reasons.slice(0, 3).join(' ')}`);
+      addLog(`📊 Below score (best:${bestCoin} ${bestScore}<${activeMinScore}) — ${bestSig.reasons.slice(0, 3).join(' ')}`);
     }
   }
 }
@@ -1010,7 +1237,7 @@ async function main() {
     return;
   }
 
-  addLog(`📡 Starting... ${COINS.join('/')}  score≥${MIN_SCORE}  monitor:${MONITOR_MS / 1000}s`);
+  addLog(`📡 v3 starting... ${COINS.join('/')}  score≥${adaptiveParams.minScore}  scan:${SCAN_MS / 1000}s  mon:${MONITOR_MS / 1000}s`);
 
   // Initial data fetch
   await Promise.allSettled([
@@ -1031,13 +1258,20 @@ async function main() {
     const wins = tradeHistory.filter(t => t.pnlUsd > 0).length;
     const totalPnl = tradeHistory.reduce((s, t) => s + t.pnlUsd, 0);
     addLog(`📂 ${tradeHistory.length} past trades — ${wins}W/${tradeHistory.length - wins}L  pnl:${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`);
+    // Bootstrap adaptive params from past trade history
+    if (tradeHistory.length >= 2) {
+      const lastExit = tradeHistory[tradeHistory.length - 1].exitReason;
+      updateAdaptiveParams(lastExit);
+    }
   }
 
   render();
 
   // ── Main poll loop ──────────────────────────────────────────────────────────
   const runLoop = async () => {
-    nextPollAt = Date.now() + POLL_MS;
+    const curInterval = scalpState === 'IN_POSITION' ? MONITOR_MS
+      : scalpState === 'SCANNING' ? SCAN_MS : POLL_MS;
+    nextPollAt = Date.now() + curInterval;
 
     try { await fetchPrices(session); } catch { /* non-fatal */ }
 
@@ -1065,7 +1299,9 @@ async function main() {
 
   await runLoop();
 
-  const getInterval = () => scalpState === 'IN_POSITION' ? MONITOR_MS : POLL_MS;
+  const getInterval = () =>
+    scalpState === 'IN_POSITION' ? MONITOR_MS :
+    scalpState === 'SCANNING'    ? SCAN_MS    : POLL_MS;
 
   const schedulePoll = () => {
     setTimeout(async () => {

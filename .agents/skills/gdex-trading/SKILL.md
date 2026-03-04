@@ -19,45 +19,25 @@ Enable programmatic interaction with GDEX (Gemach DAO's decentralized exchange) 
 ✅ **Real-Time Data** - WebSocket streams + comprehensive analytics
 ✅ **HyperLiquid Futures** - Opening leveraged positions WORKING! (Feb 26, 2026)
 
-## Installation & First-Time Setup
+## Installation
 
-### Step 1 — Install
+**Install as a Claude skill (recommended):**
 
-```bash
-git clone https://github.com/GemachDAO/gdex-trading-.git
-cd gdex-trading-
-npm install        # also runs postinstall → creates .env automatically
-```
-
-Or as a Claude skill:
 ```bash
 npx skills add GemachDAO/gdex-trading-
 ```
 
-### Step 2 — Generate your wallet & get YOUR deposit addresses
+This registers the skill with Claude Code so it can be invoked automatically for trading tasks. It also counts toward the skill's leaderboard ranking.
+
+**Or clone and run directly:**
 
 ```bash
-npm run setup
+git clone https://github.com/GemachDAO/gdex-trading-.git
+cd gdex-trading-
+npm install
+cp .env.example .env  # API key pre-filled, wallet auto-generates on first run
+npm test              # 36/36 tests passing
 ```
-
-This command:
-- Auto-generates a fresh EVM wallet (saved to `.env`) if one doesn't exist
-- Authenticates with GDEX and fetches **your personal** custodial addresses
-- Saves them to `.gdex-addresses.json` for agents to read programmatically
-- Prints a JSON line to stdout so bots can parse the output:
-
-```bash
-# Bots: grab your EVM custodial address in one line
-EVM_ADDR=$(npm run setup --silent 2>/dev/null | tail -1 | node -e "process.stdin.resume();let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).evmCustodial))")
-echo "Deposit EVM funds to: $EVM_ADDR"
-
-# Or just read the saved file after setup:
-cat .gdex-addresses.json
-```
-
-### Step 3 — Fund & Trade
-
-Send funds to **your** custodial addresses (from `npm run setup` output — not addresses shown in this doc, those belong to the repo's dev account).
 
 **SDK only (for embedding in your own project):**
 
@@ -65,23 +45,16 @@ Send funds to **your** custodial addresses (from `npm run setup` output — not 
 npm install gdex.pro-sdk ethers ws
 ```
 
-## 🔑 API Key & Wallet Setup
+## 🔑 Pre-Provided API Key (No Sign-Up Required)
 
-A shared demo API key ships with the repo — **no account needed for testing**:
+A shared API key is included — no account or sign-up needed:
 
-```bash
-cp .env.example .env   # shared key is pre-filled
-npm test               # verify 36/36 pass
+```
+GDEX_API_KEY=3f6c9e12-7b41-4c2a-9d5e-1a8f3b7e6c90,8d2a5f47-2e13-4b9c-a6f1-0c9e7d3a5b21
 ```
 
-> ⚠️ **Security note:** The shared key is for demos only. Every user who
-> clones with `cp .env.example .env` generates their **own unique wallet**
-> (auto-generated on first run), so their custodial addresses are theirs alone.
-> For real funds get your own API key at https://gdex.pro.
->
-> Never use wallet addresses shown in documentation as examples — they belong
-> to the repo's development account. Always run `npm run wallets:qr` on your
-> own machine to see **your** addresses.
+This key is already the default in `src/config.ts` and pre-filled in `.env.example`.
+Wallets are **auto-generated on first run** — no wallet setup needed either.
 
 ## API Connectivity Requirements (Critical for Agents)
 
@@ -117,7 +90,7 @@ Use `GET /v1/status` → `{"running":true}` or `sdk.tokens.getNativePrices()`. *
 ### Your Control Wallet (from .env)
 - Address you control with private key
 - Used for authentication only
-- Auto-generated on first run — check yours with `npm run wallets:qr`
+- Example: `0x01779499970726ff4C111dDF58A2CA6c366b0E20`
 
 ### GDEX Custodial Wallets (GDEX controls)
 - **ONE address for ALL EVM chains** ← This is the game changer!
@@ -178,12 +151,13 @@ The fastest way to authenticate and trade:
 ```typescript
 import { createAuthenticatedSession, buyToken, formatSolAmount } from 'gdex-trading';
 
-// One-call login — reads credentials from .env automatically
+// One-call login — merges with .env config for any missing values
 const session = await createAuthenticatedSession({
-  chainId: 622112261, // Solana (or 42161 for Arbitrum/EVM)
+  apiKey: process.env.GDEX_API_KEY || '3f6c9e12-7b41-4c2a-9d5e-1a8f3b7e6c90,8d2a5f47-2e13-4b9c-a6f1-0c9e7d3a5b21',
+  walletAddress: process.env.WALLET_ADDRESS,   // must be 0x-prefixed EVM address
+  privateKey: process.env.PRIVATE_KEY,          // EVM private key (login only)
+  chainId: 622112261,                           // Solana
 });
-// WALLET_ADDRESS, PRIVATE_KEY, GDEX_API_KEY are read from .env
-// Run `npm run wallets:qr` first to see YOUR generated addresses
 
 // Buy a token — uses session.tradingPrivateKey automatically
 const result = await buyToken(session, {
@@ -435,7 +409,7 @@ const sellResult = await sellToken(session, {
 - Sell COMPOZY: `49PJtJWfsKsUN62iM4cihjQ4EvFzbiRDQjUP2VHr1kc1R3BhHaoq7ZbgTWS87D7sqsnemypusxYYeKizzZM3wqHW`
 - Buy SSI6900 (pump.fun): `4TiPBwDjgxTdkHGNwgh5MJkdi4Ex9cpbPrpX5mC9VBDgVnzXCKZVjheLUumm4LVfqAiYHUxyL2KfsFKU5a47pAgP`
 - Sell SSI6900: `2ygnTv7SZTXXqTwJGLqMqHvWPpyavtgVzRRR7NBQC1mDz5chLRWqkvrVHtf9PJLpcYGWjAY27Db6nKSsWjuFYThW`
-- Buy Detectarena.ai (Token2022, v2 endpoint, Mar 2026): `5LNCnudBsX2adMfvZjc4w4Bhw8s2HayNbGSCH9NJds9eTMsCqU3nQGL1XJfFTLVP5WY2UGkw86VyaStb3BBzi9Ad`
+- Buy Detectarena.ai (Token2022, via `/purchase_v2`, Mar 2026): `5LNCnudBsX2adMfvZjc4w4Bhw8s2HayNbGSCH9NJds9eTMsCqU3nQGL1XJfFTLVP5WY2UGkw86VyaStb3BBzi9Ad`
 
 **Key details:**
 - `buyToken()` / `sellToken()` in `src/trading.ts` use `POST /purchase_v2` + `POST /sell_v2` for Solana (async + polling) — **not** `sdk.trading.buy()` directly
@@ -580,7 +554,7 @@ npm run base:balance    # Check Base balances
 ```typescript
 // 1. Encode deposit data (use SDK's encodeInputData)
 const encodedData = CryptoUtils.encodeInputData("hl_deposit", {
-  chainId: 42161,  // USDC source chain (must be Arbitrum); auth session chainId can be anything (Solana works)
+  chainId: 42161,  // Arbitrum only
   tokenAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",  // USDC
   amount: "10000000",  // 10 USDC (6 decimals)
   nonce: generateNonce().toString()
@@ -801,13 +775,13 @@ const usdc = new ethers.Contract(
   ['function transfer(address to, uint256 amount) returns (bool)'],
   wallet
 );
-const tx = await usdc.transfer(depositAddress, ethers.parseUnits('10', 6));
+const tx = await usdc.transfer(depositAddress, ethers.parseUnits('5', 6));
 await tx.wait();
 
 // 3. Poll for completion (1-10 minutes)
 ```
 
-**Deposit Requirements:** Min 10 USDC. The deposit payload `chainId` must be `42161` (Arbitrum — that's where the USDC contract lives). The `createAuthenticatedSession` call can use any chainId including Solana (`622112261`). Needs ETH for gas on Arbitrum.
+**Deposit Requirements:** Min 5 USDC, Arbitrum only, needs ETH for gas.
 
 #### New @gdex/sdk (PENDING - api.gdex.io not live yet)
 
@@ -999,7 +973,7 @@ Amounts must be in smallest unit as strings:
 
 **HyperLiquid:**
 - Deposits: Use custodial flow (send USDC to deposit address)
-- Minimum: 10 USDC (API enforced)
+- Minimum: 5 USDC
 - Withdrawals: `hlWithdraw()` - no decimal multiplication needed
 
 ## Common Gotchas
@@ -1024,7 +998,7 @@ Amounts must be in smallest unit as strings:
    // Recommended: keep >0.01 SOL for reliable multi-trade operation
    ```
 
-2. **HyperLiquid deposits use custodial flow** — Do NOT use `sdk.hyperLiquid.hlDeposit()` directly! It will fail with "Unauthorized" errors. Use the `/v1/hl/deposit` REST endpoint via `src/deposit-5-usdc.ts` (`npm run deposit:hl`). Minimum: **10 USDC** (API enforced — 5 USDC returns `"Too low amount, min should be 10 USDC"`). The `createAuthenticatedSession` call can use any chainId (Solana `622112261` works fine). The deposit payload's `chainId` must remain `42161` (Arbitrum — where the USDC lives). See section 4 above for complete implementation.
+2. **HyperLiquid deposits use custodial flow** — Do NOT use `sdk.hyperLiquid.hlDeposit()` directly! It will fail with "Unauthorized" errors. Instead, get your deposit address from `getUserInfo()` and send USDC to that address on Arbitrum. GDEX processes it automatically (1-10 minutes). Minimum: 5 USDC. See section 4 above for complete implementation.
 
 3. **EVM wallets for all chains** — The SDK uses secp256k1 signing internally, even for Solana. Always use a `0x`-prefixed EVM wallet address.
 
@@ -1501,7 +1475,7 @@ const isOnline = prices && Object.keys(prices).length > 0;
 
 ### Required Header Injection
 
-The `initSDK()` and `createAuthenticatedSession()` functions automatically inject the required `Origin`, `Referer`, and `User-Agent` headers into the SDK's internal HTTP client, and set the request timeout to **60 seconds** (the default 10s causes auth to fail on slower chains). No additional configuration is needed.
+The `initSDK()` and `createAuthenticatedSession()` functions automatically inject the required `Origin`, `Referer`, and `User-Agent` headers into the SDK's internal HTTP client. No additional configuration is needed.
 
 For agents that bypass the SDK and make direct HTTP calls:
 

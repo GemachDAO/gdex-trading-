@@ -23,6 +23,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { startBusServer, BUS_PORT } from './pumpfun-bus';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -293,9 +294,15 @@ function renderDashboard() {
   // ── Header ─────────────────────────────────────────────────────────────────
   lines.push(c(hLine('╠', '═', '╣', '🚀 PUMP.FUN ALPHA HUNTER'), CYN));
   const now = new Date().toLocaleTimeString();
+  const busCount = busClientCount();
+  const busStatus = busCount >= 5
+    ? c(`bus:${busCount}/6`, GRN)
+    : busCount > 0
+      ? c(`bus:${busCount}/6`, YEL)
+      : c('bus:offline', RED);
   const status =
     `${c('SCANNER', GRN)} ${c('ANALYST', YEL)} ${c('TRADER', MAG)} ` +
-    `${c('RISK', RED)} ${c('SCALPER', CYN)}  |  ${c(now, DIM)}`;
+    `${c('RISK', RED)} ${c('SCALPER', CYN)}  |  ${busStatus}  |  ${c(now, DIM)}`;
   lines.push(
     c('║', CYN) + ' ' +
     padV(`Agents: ${status}`, WIDTH - 4) +
@@ -311,9 +318,10 @@ function renderDashboard() {
     ' ' + c('║', CYN),
   );
 
-  // Balance row
+  // Balance row — prefer the pre-computed solBalance field if present
   const holdings: any[] = balData?.holdings ?? [];
-  let solBal: number | null = null;
+  let solBal: number | null =
+    typeof balData?.solBalance === 'number' ? balData.solBalance : null;
   let portfolioUsd = 0;
   let tokenCount = 0;
   for (const h of holdings) {
@@ -364,6 +372,26 @@ function renderDashboard() {
     padV(`Balance: ${balLine}`, WIDTH - 4) +
     ' ' + c('║', CYN),
   );
+
+  // ── Low SOL warning ────────────────────────────────────────────────────────
+  // Warn when SOL is too low to safely open more positions
+  if (solBal !== null) {
+    const openPosCount = openPos.length + openScalps.length;
+    const gasNeeded = 0.003 * (openPosCount + 1) + 0.005; // reserve for exits + floor
+    if (solBal < gasNeeded + 0.005) {
+      const warnMsg =
+        c('⚠  LOW SOL: ', `${BOLD}${RED}`) +
+        c(`${solBal.toFixed(4)} SOL`, `${BOLD}${WHT}`) +
+        c(' — top up ', DIM) +
+        c(custodialAddr ?? 'custodial wallet', YEL) +
+        c(' or buys will be blocked', DIM);
+      lines.push(
+        c('║', CYN) + ' ' +
+        padV(warnMsg, WIDTH - 4) +
+        ' ' + c('║', CYN),
+      );
+    }
+  }
 
   lines.push(c(hLine('╠', '═', '╣'), CYN));
 
@@ -615,6 +643,15 @@ function renderDashboard() {
   }
 
   // ── Footer ─────────────────────────────────────────────────────────────────
+  lines.push(c(hLine('╠', '═', '╣'), CYN));
+  const keyHints =
+    c('R', YEL) + c(' reset stats', DIM) + '   ' +
+    c('Ctrl+C', YEL) + c(' quit', DIM);
+  lines.push(
+    c('║', CYN) + ' ' +
+    padV(`Keys: ${keyHints}`, WIDTH - 4) +
+    ' ' + c('║', CYN),
+  );
   lines.push(c(hLine('╚', '═', '╝'), CYN));
 
   // Render: cursor home + overwrite each line + clear to EOL (no flicker)
@@ -646,6 +683,7 @@ const AGENTS: AgentConfig[] = [
 
 const children: ChildProcess[] = [];
 let agentLogFd: number | null = null;
+let busClientCount = () => 0; // updated once bus server starts
 
 function appendAgentLog(msg: string): void {
   if (agentLogFd === null) {
@@ -702,6 +740,11 @@ async function main() {
 
   appendAgentLog('PUMP.FUN ALPHA HUNTER — STARTING UP');
 
+  // Start message bus BEFORE spawning agents (they connect on boot)
+  const busServer = startBusServer();
+  busClientCount = busServer.clientCount;
+  appendAgentLog(`Message bus started on port ${BUS_PORT} — agents will connect shortly`);
+
   // Spawn all agents
   for (const agent of AGENTS) {
     children.push(spawnAgent(agent));
@@ -722,12 +765,13 @@ async function main() {
   // Re-render on terminal resize
   process.stdout.on('resize', renderDashboard);
 
-  // Graceful shutdown
+  // ── Graceful shutdown ───────────────────────────────────────────────────────
   const shutdown = () => {
     clearInterval(renderInterval);
     for (const child of children) {
       child.kill('SIGTERM');
     }
+    busServer.close();
     // Restore terminal: show cursor, exit alternate screen
     process.stdout.write(SHOW_CURSOR + ALT_SCREEN_OFF);
     if (agentLogFd !== null) {
@@ -738,6 +782,32 @@ async function main() {
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+
+  // ── Reset stats (R key) — wipes trades/positions/analytics, keeps watchlist ──
+  function resetStats() {
+    const now = new Date().toISOString();
+    try { fs.writeFileSync(LOG_PATH, JSON.stringify({ lastUpdated: now, trades: [] }, null, 2)); } catch {}
+    try { fs.writeFileSync(POSITIONS_PATH, JSON.stringify({ lastUpdated: now, positions: [] }, null, 2)); } catch {}
+    try { fs.writeFileSync(SCALP_POSITIONS_PATH, JSON.stringify({ lastUpdated: now, positions: [] }, null, 2)); } catch {}
+    try { if (fs.existsSync(ANALYTICS_PATH)) fs.unlinkSync(ANALYTICS_PATH); } catch {}
+    appendAgentLog(`${c('RESET', YEL)} Stats cleared — fresh session started at ${now}`);
+    renderDashboard();
+  }
+
+  // ── Keyboard input ──────────────────────────────────────────────────────────
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (key: string) => {
+      if (key === 'r' || key === 'R') {
+        resetStats();
+      } else if (key === '\u0003') {
+        // Ctrl+C
+        shutdown();
+      }
+    });
+  }
 }
 
 main().catch((err) => {

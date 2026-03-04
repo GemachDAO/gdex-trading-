@@ -109,6 +109,8 @@ Configuration is in `.env` (see `.env.example`). Key variables:
 
 Buy/sell meme coins on Solana via `buyToken()` / `sellToken()` from `src/trading.ts`. **Pump.fun tokens work** even before DEX graduation (`isListedOnDex: false` is fine).
 
+> **⚠️ CRITICAL (Mar 2026):** The SDK's `sdk.trading.buy()` calls old `POST /purchase`, which returns `401 { error: 'Unsupported token' }` for Token2022 tokens (88%+ of pump.fun tokens now). `buyToken()` / `sellToken()` in `src/trading.ts` automatically use `POST /purchase_v2` + `POST /sell_v2` (async queue + poll) which handles Token2022 and Raydium LaunchLab tokens. **Always use the wrappers, never `sdk.trading.buy()` directly for Solana.**
+
 ```typescript
 // Auth on Solana (fallback to Arbitrum if needed)
 let session;
@@ -143,6 +145,7 @@ const sell = await sellToken(session, {
 - Sell COMPOZY: `49PJtJWf...qHW`
 - Buy SSI6900 (pump.fun): `4TiPBwDj...pAgP`
 - Sell SSI6900: `2ygnTv7S...YThW`
+- Buy Detectarena.ai (Token2022, via `/purchase_v2`, Mar 2026): `5LNCnudB...9Ad`
 
 **Token selection (best practices):**
 - Sort by `txCount` (higher = more activity = better liquidity)
@@ -278,6 +281,9 @@ All need browser UA header (`Mozilla/5.0 ...Chrome/122.0.0.0`). No SDK wrapper �
 
 | Endpoint | Notes |
 |----------|-------|
+| `POST /v1/purchase_v2` | **Async Solana buy** — returns `{requestId}`; poll `/v1/trade-status/:requestId`. Handles Token2022 + Raydium LaunchLab. Body: `{computedData, chainId, slippage, tip}` |
+| `POST /v1/sell_v2` | **Async Solana sell** — same pattern as purchase_v2 |
+| `GET /v1/trade-status/:requestId` | Poll result of v2 trades → `{status: 'pending'|'processing'|'success'|'error', hash?, error?}` |
 | `GET /v1/status` | Health check → `{"running":true}` |
 | `GET /v1/checkSolanaConnectionRpc` | RPC health → `{"useMainRPC":true}` |
 | `GET /v1/bigbuys/:chainId` | 50 recent whale buys — useful signal (622112261=Solana, 8453=Base) |

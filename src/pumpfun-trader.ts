@@ -13,22 +13,47 @@ import WebSocket from 'ws';
 import * as fs from 'fs';
 import { createAuthenticatedSession, GDEXSession } from './auth';
 import { buyToken, formatSolAmount } from './trading';
+import { tryConnectBus, BusClient } from './pumpfun-bus';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SOLANA = 622112261;
-const POLL_MS = 10_000;
+const POLL_MS = 60_000; // safety-net fallback — primary trigger is SCORES_UPDATE event
 const BUY_SOL = 0.005;
 const SCORE_THRESHOLD = 60;
 const MAX_POSITIONS = 5;
 const RETRY_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 const SESSION_REFRESH_MS = 25 * 60 * 1000; // 25 minutes — refresh before server TTL
+// Reserve per open position so there's always enough SOL to pay exit tx fees.
+// Each Solana sell costs ~0.0005–0.002 SOL with priority fees; 0.003 is safe.
+const GAS_RESERVE_PER_POSITION = 0.003;
+// Absolute floor — never let the wallet drop below this regardless of positions
+const MIN_SOL_FLOOR = 0.005;
 const SCORES_PATH = '/tmp/pumpfun-scores.json';
 const POSITIONS_PATH = '/tmp/pumpfun-positions.json';
 const SCALP_POSITIONS_PATH = '/tmp/pumpfun-scalp-positions.json';
+const BALANCE_PATH = '/tmp/pumpfun-balance.json';
 
 // Module-level session so it can be refreshed without restarting the loop
 let session: GDEXSession;
+
+// Bus client — no-op until connected
+let bus: BusClient = { publish: () => {}, log: () => {}, close: () => {} };
+
+// Circuit break flag — set true by RISK when consecutive losses detected
+let circuitBroken = false;
+
+// Cached SOL balance — updated by BALANCE_UPDATE bus events from SCANNER
+let cachedSolBalance: number | null = null;
+
+function readSolBalance(): number | null {
+  try {
+    const data = JSON.parse(fs.readFileSync(BALANCE_PATH, 'utf8'));
+    return typeof data.solBalance === 'number' ? data.solBalance : null;
+  } catch {
+    return null;
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -106,9 +131,14 @@ function readScores(): TokenScore[] {
 
 // ─── Main trader loop ─────────────────────────────────────────────────────────
 
-async function tradingLoop(attempted: Map<string, number>) {
+// incomingScores: provided by SCORES_UPDATE bus event (skips file read)
+async function tradingLoop(attempted: Map<string, number>, incomingScores?: any[]) {
   try {
-    const scores = readScores();
+    if (circuitBroken) {
+      log('⚠️  Circuit break active — skipping buy check');
+      return;
+    }
+    const scores = incomingScores ?? readScores();
     if (scores.length === 0) return;
 
     const posData = readPositions();
@@ -118,6 +148,22 @@ async function tradingLoop(attempted: Map<string, number>) {
     if (openCount >= MAX_POSITIONS) {
       log(`Max positions (${MAX_POSITIONS}) reached, not buying`);
       return;
+    }
+
+    // ── SOL balance guard ─────────────────────────────────────────────────────
+    // Only block on a *confirmed* low balance. If reading fails (null) we allow
+    // the trade — a missing API read must never silently prevent trading.
+    const solBal = cachedSolBalance ?? readSolBalance();
+    if (solBal !== null) {
+      const requiredSol = BUY_SOL + GAS_RESERVE_PER_POSITION * (openCount + 1) + MIN_SOL_FLOOR;
+      if (solBal < requiredSol) {
+        log(
+          `⚠️  LOW SOL: ${solBal.toFixed(4)} SOL available, ` +
+          `need ${requiredSol.toFixed(4)} (buy ${BUY_SOL} + ` +
+          `${openCount + 1} exit reserves + floor) — skipping buy`,
+        );
+        return;
+      }
     }
 
     // Collect addresses AND symbols from both trader and scalper positions
@@ -263,6 +309,17 @@ async function tradingLoop(attempted: Map<string, number>) {
       log(
         `✅ BOUGHT ${target.symbol} | tx: ${result.hash ?? 'n/a'} | spent: ${BUY_SOL} SOL`
       );
+
+      // Notify RISK immediately — no 8s polling lag before it starts monitoring
+      bus.publish('POSITION_OPENED', {
+        positionId: position.id,
+        tokenAddress: position.address,
+        symbol: position.symbol,
+        entryPrice: position.entryPrice,
+        amountSol: BUY_SOL,
+        source: 'trader',
+        openedAt: Date.now(),
+      });
     } else {
       log(
         `❌ BUY FAILED ${target.symbol}: ${result.message ?? JSON.stringify(result)}`
@@ -282,23 +339,43 @@ async function main() {
 
   const attempted = new Map<string, number>();
 
+  // Connect to bus — react to SCORES_UPDATE instantly and respect CIRCUIT_BREAK
+  bus = await tryConnectBus('TRADER', (msg) => {
+    if (msg.type === 'SCORES_UPDATE') {
+      const scores: any[] = msg.data?.scores ?? [];
+      if (scores.length > 0) tradingLoop(attempted, scores).catch(() => {});
+    } else if (msg.type === 'BALANCE_UPDATE') {
+      cachedSolBalance = msg.data?.solBalance ?? null;
+    } else if (msg.type === 'CIRCUIT_BREAK') {
+      circuitBroken = true;
+      log(`🛑 CIRCUIT BREAK received: ${msg.data?.reason ?? 'unknown'} — trading halted`);
+    } else if (msg.type === 'CIRCUIT_RESUME') {
+      circuitBroken = false;
+      log('✅ CIRCUIT RESUME received — trading re-enabled');
+    }
+  });
+  log('Connected to message bus — event-driven trading active');
+
   // Proactively refresh session before the server-side TTL expires
   const refreshInterval = setInterval(authenticate, SESSION_REFRESH_MS);
 
-  // Run immediately then on interval
+  // Run immediately from file (bus won't have scores on first launch)
   await tradingLoop(attempted);
+
+  // Safety-net fallback: poll every 60s in case a SCORES_UPDATE was missed
   const interval = setInterval(() => tradingLoop(attempted), POLL_MS);
 
   const shutdown = () => {
     log('Shutting down trader');
     clearInterval(interval);
     clearInterval(refreshInterval);
+    bus.close();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  log(`Trader running — checking every ${POLL_MS / 1000}s | threshold: ${SCORE_THRESHOLD} | max positions: ${MAX_POSITIONS} | session refresh every ${SESSION_REFRESH_MS / 60000}min`);
+  log(`Trader running — event-driven + ${POLL_MS / 1000}s fallback | threshold: ${SCORE_THRESHOLD} | max: ${MAX_POSITIONS} | circuit break: ${circuitBroken}`);
 }
 
 main().catch((err) => {

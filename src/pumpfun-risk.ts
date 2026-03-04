@@ -19,6 +19,7 @@ import WebSocket from 'ws';
 import * as fs from 'fs';
 import { createAuthenticatedSession, GDEXSession } from './auth';
 import { sellToken } from './trading';
+import { tryConnectBus, BusClient } from './pumpfun-bus';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -38,8 +39,17 @@ const LOG_PATH = '/tmp/pumpfun-log.json';
 // Module-level session so authenticate() can refresh it anywhere
 let session: GDEXSession;
 
+// Bus client — no-op until connected
+let bus: BusClient = { publish: () => {}, log: () => {}, close: () => {} };
+
 // Guards against concurrent closes/partials of the same position
 const closingPositions = new Set<string>();
+
+// Circuit break tracking — halt trading after 3 consecutive losses within 30 min
+const recentLosses: number[] = [];
+const CIRCUIT_BREAK_WINDOW_MS = 30 * 60 * 1000;
+const CIRCUIT_BREAK_THRESHOLD = 3;
+let circuitActive = false;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -323,12 +333,53 @@ async function executeClose(
       exitTxHash: sellResult.hash ?? null,
     });
 
+    const holdMs = Date.now() - new Date(pos.entryTime).getTime();
     const emoji = reason === 'TP' ? '✅' : reason === 'TIME' ? '⏱' : '❌';
     log(
       `  ${emoji} CLOSED ${pos.symbol} | reason: ${reason} ` +
       `| P&L: ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%` +
       ` (${pnlSol >= 0 ? '+' : ''}${pnlSol.toFixed(4)} SOL) | tx: ${sellResult.hash ?? 'n/a'}`,
     );
+
+    // Notify ANALYTICS instantly (no 30s polling lag)
+    bus.publish('TRADE_COMPLETE', {
+      positionId: pos.id,
+      tokenAddress: pos.address,
+      symbol: pos.symbol,
+      pnlPct,
+      pnlSol,
+      reason,
+      holdMs,
+      source: 'trader',
+    });
+
+    // Circuit break: 3+ consecutive losses in 30 min → halt TRADER + SCALPER
+    const now = Date.now();
+    if (reason === 'SL') {
+      recentLosses.push(now);
+      // Purge losses older than the window
+      while (recentLosses.length && now - recentLosses[0] > CIRCUIT_BREAK_WINDOW_MS) {
+        recentLosses.shift();
+      }
+      if (recentLosses.length >= CIRCUIT_BREAK_THRESHOLD && !circuitActive) {
+        circuitActive = true;
+        log(`🚨 CIRCUIT BREAK: ${recentLosses.length} losses in ${CIRCUIT_BREAK_WINDOW_MS / 60000}min — halting trading`);
+        bus.publish('CIRCUIT_BREAK', {
+          reason: `${recentLosses.length} consecutive SL hits`,
+          consecutiveLosses: recentLosses.length,
+        });
+        // Auto-resume after the window expires
+        setTimeout(() => {
+          recentLosses.length = 0;
+          circuitActive = false;
+          log('✅ Circuit break lifted — trading resumed');
+          bus.publish('CIRCUIT_RESUME', {});
+        }, CIRCUIT_BREAK_WINDOW_MS);
+      }
+    } else {
+      // TP or TIME exit resets the loss streak
+      recentLosses.length = 0;
+    }
   } finally {
     closingPositions.delete(pos.id);
   }
@@ -555,6 +606,16 @@ async function main() {
     );
   }
 
+  // Connect to bus — receive new position notifications + send circuit breaks
+  bus = await tryConnectBus('RISK', (msg) => {
+    if (msg.type === 'POSITION_OPENED') {
+      log(`📥 Position opened via bus: ${msg.data?.symbol} (${msg.data?.source}) — monitoring started`);
+      // Trigger immediate risk check so we don't wait for the 8s poll
+      riskLoop().catch(() => {});
+    }
+  });
+  log('Connected to message bus — instant position monitoring active');
+
   await startWebSocketFeed();
 
   const refreshInterval = setInterval(authenticate, SESSION_REFRESH_MS);
@@ -571,6 +632,7 @@ async function main() {
     log('Shutting down risk manager');
     clearInterval(pollInterval);
     clearInterval(refreshInterval);
+    bus.close();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);

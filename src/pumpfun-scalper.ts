@@ -21,6 +21,7 @@ import WebSocket from 'ws';
 import * as fs from 'fs';
 import { createAuthenticatedSession, GDEXSession } from './auth';
 import { buyToken, sellToken, formatSolAmount } from './trading';
+import { tryConnectBus, BusClient } from './pumpfun-bus';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -37,15 +38,37 @@ const MIN_TX_COUNT = 5;
 const MIN_BC_PROGRESS = 3;
 const MIN_MCAP = 500;
 const RETRY_COOLDOWN_MS = 3 * 60 * 1000;
-const POLL_MS = 5_000;
+const POLL_MS = 30_000; // safety-net fallback — primary trigger is TOKENS_UPDATE event
 const SESSION_REFRESH_MS = 25 * 60 * 1000;
+// Reserve per open position so there's always enough SOL to pay exit tx fees.
+const GAS_RESERVE_PER_POSITION = 0.003;
+const MIN_SOL_FLOOR = 0.005;
 const WATCHLIST_PATH = '/tmp/pumpfun-watchlist.json';
 const POSITIONS_PATH = '/tmp/pumpfun-scalp-positions.json';
 const REGULAR_POSITIONS_PATH = '/tmp/pumpfun-positions.json';
 const LOG_PATH = '/tmp/pumpfun-log.json';
+const BALANCE_PATH = '/tmp/pumpfun-balance.json';
 
 let session: GDEXSession;
 const closingPositions = new Set<string>();
+
+// Bus client — no-op until connected
+let bus: BusClient = { publish: () => {}, log: () => {}, close: () => {} };
+
+// Circuit break flag — set true by RISK when consecutive losses detected
+let circuitBroken = false;
+
+// Cached SOL balance — updated by BALANCE_UPDATE bus events from SCANNER
+let cachedSolBalance: number | null = null;
+
+function readSolBalance(): number | null {
+  try {
+    const data = JSON.parse(fs.readFileSync(BALANCE_PATH, 'utf8'));
+    return typeof data.solBalance === 'number' ? data.solBalance : null;
+  } catch {
+    return null;
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -425,11 +448,28 @@ async function ageCheckLoop(): Promise<void> {
 
 // ─── Main scalp loop ─────────────────────────────────────────────────────────
 
-async function scalpLoop(attempted: Map<string, number>): Promise<void> {
+// incomingTokens: provided by TOKENS_UPDATE bus event (skips file read)
+async function scalpLoop(attempted: Map<string, number>, incomingTokens?: WatchedToken[]): Promise<void> {
   try {
+    if (circuitBroken) return; // respect circuit break from RISK
+
     const posData = readPositions();
     const openCount = posData.positions.filter((p) => p.status === 'open').length;
     if (openCount >= MAX_POSITIONS) return;
+
+    // ── SOL balance guard ─────────────────────────────────────────────────────
+    // Only block on a *confirmed* low balance — never on a failed API read.
+    const solBal = cachedSolBalance ?? readSolBalance();
+    if (solBal !== null) {
+      const requiredSol = BUY_SOL + GAS_RESERVE_PER_POSITION * (openCount + 1) + MIN_SOL_FLOOR;
+      if (solBal < requiredSol) {
+        log(
+          `⚠️  LOW SOL: ${solBal.toFixed(4)} available, ` +
+          `need ${requiredSol.toFixed(4)} (buy + ${openCount + 1} exit reserves + floor) — skipping scalp`,
+        );
+        return;
+      }
+    }
 
     // Collect addresses AND symbols from both scalp and regular positions
     const heldAddrs = new Set(
@@ -453,12 +493,16 @@ async function scalpLoop(attempted: Map<string, number>): Promise<void> {
       // Regular positions file may not exist yet
     }
 
-    let tokens: WatchedToken[] = [];
-    try {
-      const wl = JSON.parse(fs.readFileSync(WATCHLIST_PATH, 'utf8'));
-      tokens = wl?.tokens ?? [];
-    } catch {
-      return; // Watchlist not ready yet
+    let tokens: WatchedToken[];
+    if (incomingTokens) {
+      tokens = incomingTokens;
+    } else {
+      try {
+        const wl = JSON.parse(fs.readFileSync(WATCHLIST_PATH, 'utf8'));
+        tokens = wl?.tokens ?? [];
+      } catch {
+        return; // Watchlist not ready yet
+      }
     }
 
     const now = Date.now();
@@ -523,6 +567,17 @@ async function scalpLoop(attempted: Map<string, number>): Promise<void> {
       writePositions(fresh);
 
       log(`✅ SCALP BOUGHT ${target.symbol} | tx: ${result.hash ?? 'n/a'} | ${BUY_SOL} SOL`);
+
+      // Notify RISK immediately — instant monitoring start
+      bus.publish('POSITION_OPENED', {
+        positionId: position.id,
+        tokenAddress: position.address,
+        symbol: position.symbol,
+        entryPrice: position.entryPrice,
+        amountSol: BUY_SOL,
+        source: 'scalper',
+        openedAt: Date.now(),
+      });
     } else {
       log(`❌ SCALP BUY FAILED ${target.symbol}: ${result.message ?? JSON.stringify(result)}`);
     }
@@ -542,9 +597,32 @@ async function main() {
   const attempted = new Map<string, number>();
   const refreshInterval = setInterval(authenticate, SESSION_REFRESH_MS);
 
+  // Connect to bus — react to new tokens instantly, respect circuit break
+  bus = await tryConnectBus('SCALPER', (msg) => {
+    if (msg.type === 'TOKENS_UPDATE') {
+      const tokens: WatchedToken[] = msg.data?.tokens ?? [];
+      if (tokens.length > 0) {
+        // Run age check first (exits), then check for new scalp entries
+        ageCheckLoop()
+          .then(() => scalpLoop(attempted, tokens))
+          .catch(() => {});
+      }
+    } else if (msg.type === 'BALANCE_UPDATE') {
+      cachedSolBalance = msg.data?.solBalance ?? null;
+    } else if (msg.type === 'CIRCUIT_BREAK') {
+      circuitBroken = true;
+      log(`🛑 CIRCUIT BREAK — scalping halted: ${msg.data?.reason ?? 'unknown'}`);
+    } else if (msg.type === 'CIRCUIT_RESUME') {
+      circuitBroken = false;
+      log('✅ CIRCUIT RESUME — scalping re-enabled');
+    }
+  });
+  log('Connected to message bus — instant token detection active');
+
   await ageCheckLoop();
   await scalpLoop(attempted);
 
+  // Safety-net fallback: full scan every 30s in case TOKENS_UPDATE was missed
   const interval = setInterval(async () => {
     await ageCheckLoop();
     await scalpLoop(attempted);
@@ -554,13 +632,14 @@ async function main() {
     log('Shutting down scalper');
     clearInterval(interval);
     clearInterval(refreshInterval);
+    bus.close();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
   log(
-    `Scalper running — poll ${POLL_MS / 1000}s` +
+    `Scalper running — event-driven + ${POLL_MS / 1000}s fallback` +
     ` | Fresh 0–2min | TP +${SCALP_TP_PCT}%` +
     ` | Trail +${TRAIL_ACTIVATE_PCT}%↓${TRAIL_DROP_PCT}%` +
     ` | SL ${SCALP_SL_PCT}% | Max ${MAX_HOLD_MS / 1000}s`,

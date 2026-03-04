@@ -16,6 +16,7 @@
  */
 
 import * as fs from 'fs';
+import { tryConnectBus, BusClient } from './pumpfun-bus';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -573,20 +574,33 @@ function run() {
 
 // ─── Entry point ────────────────────────────────────────────────────────────
 
-function main() {
+async function main() {
   log('Starting analytics...');
+
+  // Connect to bus — recompute immediately when a trade closes (not every 30s)
+  let bus: BusClient = { publish: () => {}, log: () => {}, close: () => {} };
+  bus = await tryConnectBus('ANALYTICS', (msg) => {
+    if (msg.type === 'TRADE_COMPLETE') {
+      log(`Trade complete received: ${msg.data?.symbol} ${msg.data?.reason} ${msg.data?.pnlPct?.toFixed(1)}%`);
+      // Brief delay so log file is written before we read it
+      setTimeout(() => run(), 500);
+    }
+  });
+  log('Connected to message bus — real-time analytics active');
+
   run();
   const interval = setInterval(run, POLL_MS);
 
   const shutdown = () => {
     log('Shutting down analytics');
     clearInterval(interval);
+    bus.close();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  log(`Analytics running — updating every ${POLL_MS / 1000}s`);
+  log(`Analytics running — event-driven + ${POLL_MS / 1000}s fallback`);
 }
 
 main();

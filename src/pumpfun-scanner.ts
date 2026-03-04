@@ -11,7 +11,9 @@ import WebSocket from 'ws';
 (globalThis as any).WebSocket = WebSocket;
 
 import * as fs from 'fs';
+import axios from 'axios';
 import { createAuthenticatedSession, GDEXSession } from './auth';
+import { tryConnectBus, BusClient } from './pumpfun-bus';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -24,6 +26,9 @@ const BALANCE_PATH = '/tmp/pumpfun-balance.json';
 
 // Module-level session so authenticate() can refresh it anywhere
 let session: GDEXSession;
+
+// Bus client — no-op until connected (falls back to file-only if bus unavailable)
+let bus: BusClient = { publish: () => {}, log: () => {}, close: () => {} };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -95,19 +100,68 @@ async function authenticate(): Promise<void> {
 // Fetches custodial wallet holdings every poll cycle so the dashboard can
 // display the live SOL balance and portfolio value.
 
+// ─── Solana RPC balance (bypasses GDEX API entirely) ─────────────────────────
+
+async function fetchSolBalanceRpc(address: string): Promise<number | null> {
+  try {
+    const res = await axios.post(
+      'https://api.mainnet-beta.solana.com',
+      { jsonrpc: '2.0', id: 1, method: 'getBalance', params: [address] },
+      { headers: { 'Content-Type': 'application/json' }, timeout: 8000 },
+    );
+    const lamports = res.data?.result?.value;
+    if (typeof lamports === 'number') return lamports / 1_000_000_000;
+  } catch {}
+  return null;
+}
+
 async function writeBalanceFile(): Promise<void> {
   try {
+    // Try GDEX holdings API first
     let holdings: any[] | null = null;
+    let holdingsOk = false;
     try {
       const raw = await session.sdk.user.getHoldingsList(
         session.walletAddress,
         SOLANA,
         session.encryptedSessionKey,
       );
-      if (Array.isArray(raw)) holdings = raw;
+      if (Array.isArray(raw)) {
+        holdings = raw;
+        holdingsOk = true;
+      }
     } catch {
-      // Holdings fetch failed — non-fatal
+      // Ignore — will fall back to RPC
     }
+
+    // Extract SOL from holdings when the API worked
+    let solBalance: number | null = null;
+    if (holdingsOk && Array.isArray(holdings)) {
+      let total = 0;
+      for (const h of holdings) {
+        const sym = (h.symbol ?? h.ticker ?? '').toUpperCase();
+        const bal = parseFloat(h.balance ?? h.amount ?? h.nativeBalance ?? '0') || 0;
+        if (sym === 'SOL' || h.isNative) total += bal;
+      }
+      solBalance = total;
+    }
+
+    // If GDEX API failed or returned no SOL entry (e.g. empty holdings array), fall back to Solana RPC
+    if (solBalance === null || solBalance === 0) {
+      const custodial = session.custodialAddress ?? '';
+      if (custodial) {
+        const rpcBal = await fetchSolBalanceRpc(custodial);
+        if (rpcBal !== null) {
+          solBalance = rpcBal;
+          log(`SOL balance (via RPC): ${solBalance.toFixed(4)} SOL`);
+        } else {
+          log('SOL balance unknown — RPC also failed, skipping balance update');
+          return; // Don't overwrite with stale 0
+        }
+      }
+    }
+
+    if (solBalance === null) return; // Nothing reliable to write
 
     const tmp = BALANCE_PATH + '.tmp';
     fs.writeFileSync(
@@ -115,10 +169,15 @@ async function writeBalanceFile(): Promise<void> {
       JSON.stringify({
         lastUpdated: new Date().toISOString(),
         custodialAddress: session.custodialAddress,
+        solBalance,
         holdings,
       }, null, 2),
     );
     fs.renameSync(tmp, BALANCE_PATH);
+
+    // Only broadcast a confirmed balance — never a failed-API 0
+    bus.publish('BALANCE_UPDATE', { solBalance });
+    log(`SOL balance: ${solBalance.toFixed(4)} SOL`);
   } catch {
     // Non-fatal — dashboard will show cached value
   }
@@ -188,8 +247,12 @@ async function poll() {
     tokens.sort((a, b) => (b.firstSeen > a.firstSeen ? 1 : -1));
     tokens = tokens.slice(0, MAX_TOKENS);
 
-    writeWatchlist({ lastUpdated: new Date().toISOString(), tokens });
+    const watchlistData = { lastUpdated: new Date().toISOString(), tokens };
+    writeWatchlist(watchlistData);
     log(`Watchlist updated: ${tokens.length} tokens (${raw.length} fetched)`);
+
+    // Push to bus so ANALYST and SCALPER react immediately (no polling delay)
+    bus.publish('TOKENS_UPDATE', { tokens, count: tokens.length });
 
     await writeBalanceFile();
   } catch (err: any) {
@@ -306,6 +369,21 @@ async function startWebSocketFeed() {
           if (changed) {
             wl.lastUpdated = new Date().toISOString();
             writeWatchlist(wl);
+
+            // Push price ticks to RISK (instant SL/TP) and SCALPER
+            const updates = data.effectedTokensData
+              .filter((t: any) => t.address)
+              .map((t: any) => ({
+                address: t.address,
+                price: typeof t.priceUsd === 'number'
+                  ? t.priceUsd
+                  : parseFloat(t.priceUsd ?? t.priceNative ?? '0') || 0,
+                priceChangePct: t.priceChanges?.m5 ?? 0,
+              }))
+              .filter((u: any) => u.price > 0);
+            if (updates.length > 0) {
+              bus.publish('PRICE_UPDATE', { updates });
+            }
           }
         }
       } catch {
@@ -323,6 +401,12 @@ async function startWebSocketFeed() {
 
 async function main() {
   log('Starting pump.fun scanner...');
+
+  // Connect to message bus (non-blocking — falls back to file-only if unavailable)
+  bus = await tryConnectBus('SCANNER', () => {
+    // Scanner doesn't need to receive messages from other agents
+  });
+  log('Connected to message bus');
 
   await authenticate();
   await writeBalanceFile();
